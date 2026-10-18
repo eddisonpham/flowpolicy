@@ -1,0 +1,51 @@
+# --- Agent kit: local-only green flag (never commit) ---
+.claude/GREENLIGHT
+.claude/settings.local.json
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Editors ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# --- Envs (uv.lock and .python-version stay tracked) ---
+.venv/
+venv/
+
+# --- Tool caches / coverage ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- Large / generated artifacts (anchored to repo root) ---
+/data/
+/logs/
+/runs/
+/wandb/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
