@@ -6,7 +6,7 @@ Tags: [V] verified, [S] secondary source, [U] unverified. Access date for all so
 
 | Benchmark | Source | Format | Notes |
 |---|---|---|---|
-| PushT | Diffusion Policy public demos (about 200 human demos) [S]; also on Hugging Face as `lerobot/pusht` (v1.3 referenced by a LeRobot model card) [S] | Zarr (DP) / LeRobot dataset | Download URL and license of each: [U], record before use. |
+| PushT | Diffusion Policy public demos (about 200 human demos) [S]; also on Hugging Face as `lerobot/pusht` [S] | LeRobot parquet + AV1 video, converted to our Zarr | **Used source: `lerobot/pusht` v3.0, MIT licence (dataset card, accessed 2026-10-19), 206 episodes / 25 650 frames / 96x96 / 10 fps.** Conversion script: `scripts/data/prepare_pusht.py`; output `data/pusht/pusht.zarr`. |
 | robomimic Lift, Can (Square if time) | robomimic datasets, moved to Hugging Face in robomimic v0.4 [S] | HDF5 | Convert to Zarr once. Repo names and license: [U]. |
 
 Zarr schema (own, documented; PushT-DP layout assumed `data/{img,state,action}` plus `meta/episode_ends` [U], confirm on download):
@@ -48,9 +48,15 @@ Common: shared encoder (ResNet-18 GN, global avg pool or spatial softmax; state 
 
 Estimate by component: parameters x bytes (bf16 weights plus fp32 master and Adam states, about 12 to 16 bytes per param trainable, [U] confirm), activations scale with batch x To x image size. Procedure: `torch.cuda.reset_peak_memory_stats()`, run 20 steps at batch sizes 32/64/128/256, record `max_memory_allocated`, fill the table below. Anything above the measured free VRAM minus 0.5 GiB is flagged "does not fit"; mitigations in order: smaller batch, activation checkpointing in the encoder, 84x84 images, gradient accumulation.
 
+Measured 2026-10-19 on the RTX 5060 Laptop (7.93 GiB total; 6.98 GiB free before the run), 96x96, To=2, Tp=16, bf16, 10.95 M parameters. Raw rows: `results/memory.jsonl`; table: `results/tables/m2_memory.md`.
+
 | Model + data | Batch | Peak VRAM | Steps/s | Fits |
 |---|---|---|---|---|
-| all rows | | TBD | TBD | TBD |
+| flow 96px | 32 | 2317 MiB | 7.80 | yes |
+| flow 96px | 64 | 4414 MiB | 4.00 | yes |
+| flow 96px | 128 | 8616 MiB | 0.05 | no (fits flag uses free VRAM minus 0.5 GiB) |
+
+The 1800-step E1 runs used batch 64, which peaks at 4.41 GiB and leaves room for the desktop. Batch 128 is reported as measured (it did not OOM on an otherwise empty GPU) but is flagged `fits: false` by the pre-registered free-VRAM rule.
 
 ## 5. Training infrastructure
 

@@ -1,0 +1,8 @@
+{"run_id": "smoke_flow", "policy": "flow", "step": 1, "loss": 1.5696101188659668, "lr": 1.0000000000000002e-06, "steps_per_s": 0.3010699771148848, "elapsed_s": 16.60743474960327, "peak_vram_mb": 1580.4814453125}
+{"run_id": "smoke_flow", "policy": "flow", "step": 5, "loss": 1.516268253326416, "lr": 3e-06, "steps_per_s": 10.571990440024056, "elapsed_s": 17.080382585525513, "peak_vram_mb": 1776.05322265625}
+{"run_id": "smoke_flow", "policy": "flow", "step": 10, "loss": 1.406829833984375, "lr": 5.500000000000001e-06, "steps_per_s": 8.238932952832483, "elapsed_s": 17.687257289886475, "peak_vram_mb": 1776.05322265625}
+{"run_id": "smoke_flow", "step": 10, "val_loss": 1.3222861289978027}
+{"run_id": "smoke_flow", "policy": "flow", "step": 15, "loss": 1.2428996562957764, "lr": 8.000000000000001e-06, "steps_per_s": 3.9277341800292658, "elapsed_s": 18.96025586128235, "peak_vram_mb": 3365.701171875}
+{"run_id": "smoke_flow", "policy": "flow", "step": 20, "loss": 0.9980143308639526, "lr": 1.05e-05, "steps_per_s": 8.474365185935595, "elapsed_s": 19.550270557403564, "peak_vram_mb": 3365.701171875}
+{"run_id": "smoke_flow", "step": 20, "val_loss": 0.9275432825088501}
+{"run_id": "smoke_flow", "policy": "flow", "step": 20, "loss": 0.9980143308639526, "params": 18247938, "elapsed_s": 20.35597014427185, "checkpoint": "checkpoints\\smoke_flow\\last.pt", "stopped_early": false, "peak_vram_mb": 3365.701171875, "event": "end"}

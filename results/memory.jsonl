@@ -1,0 +1,3 @@
+{"model": "flow", "params": 10946674, "batch": 32, "image_size": 96, "obs_horizon": 2, "pred_horizon": 16, "peak_vram_mb": 2316.5390625, "steps_per_s": 7.804875002975963, "fits": true, "free_vram_mb_before": 6981.0}
+{"model": "flow", "params": 10946674, "batch": 64, "image_size": 96, "obs_horizon": 2, "pred_horizon": 16, "peak_vram_mb": 4414.2158203125, "steps_per_s": 4.0001310442929165, "fits": true, "free_vram_mb_before": 6981.0}
+{"model": "flow", "params": 10946674, "batch": 128, "image_size": 96, "obs_horizon": 2, "pred_horizon": 16, "peak_vram_mb": 8616.1318359375, "steps_per_s": 0.05356115870703569, "fits": false, "free_vram_mb_before": 6981.0}

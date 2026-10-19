@@ -43,3 +43,42 @@
 - G3 now passes all three modes (`default`, `reduce-overhead`, `max-autotune`) and G5 passes with `triton 3.8.0`; the assembler works, so risk R2's `TRITON_PTXAS_PATH` fallback is not needed here.
 - `just gates` is five PASS and `just test` is green. 02 §2 (Triton row), §3.1 (pin, marked [V] with the [U] upstream-version question) and §8 (G3, G5) updated.
 - This replaces the "do not install Triton separately" guidance in 02 §3.1 for this host; the reason is the dated deviation recorded there.
+
+## 2026-10-19: M2 data and model plumbing (agent)
+
+- Added the Zarr window loader, train-only normalizer with round-trip tests, ResNet-18 GN multi-frame encoder, 1-D U-Net and transformer chunk heads, and the three policies (flow, DDPM/DDIM, ACT-style regression) behind one `BasePolicy` interface (`loss(batch)` / `predict_chunk(obs)`).
+- `scripts/data/prepare_pusht.py` downloads and converts `lerobot/pusht` to `data/pusht/pusht.zarr` (32 MB, MIT). Hydra configs live in `conf/` with structured dataclasses in `src/flowpolicy/config.py`.
+- Measured memory table (docs/03 §4): batch 32 = 2317 MiB / 7.80 steps/s, batch 64 = 4414 MiB / 4.00 steps/s, batch 128 = 8616 MiB / 0.05 steps/s and flagged not fitting. Model is 10.95 M parameters. Batch 64 was used for E1.
+- Unit tests cover window indices, normalizer round-trip, policy shapes/losses, seed disjointness, and resume equivalence (`rtol=1e-5`). `just test` green (23 tests).
+
+## 2026-10-19: M3 trainer and overfit sanity (agent)
+
+- Trainer: bf16 autocast, AdamW, warmup + cosine, grad clip 10, EMA 0.999 (EMA used for every eval), periodic + final checkpoints, SIGINT/SIGTERM checkpoint-and-exit, JSONL scalar log, checkpoint carries model/EMA/optimizer/scheduler/step/RNG/hydra config/stats/git hash/`uv.lock` hash.
+- Overfit check on 8 episodes, 10x-reduction criterion: flow 1.230 -> 0.065 (0.053x) and DDPM 1.096 -> 0.091 (0.083x) at 1200 steps; regression 0.376 -> 0.029 (0.077x) at 2000 steps (it reached 0.109x at 1200, so the budget was raised for that policy only and the step count is reported per row).
+- Bug found by the post-reboot resume: a checkpoint loaded with `map_location=cuda` holds CUDA RNG tensors, which `set_state` rejects. `Trainer.resume` now moves them to CPU. The interrupted DDPM run resumed from step 1200 and its uncheckpointed 1200-1625 tail was dropped from the JSONL instead of being kept.
+
+## 2026-10-19: M4/M5 E1, E3 and the E0 fallback (agent)
+
+- Nine runs (3 policies x 3 seeds), 1800 steps, batch 64, ~9 min each (1.4 GPU-h total). `results/train/*.jsonl` has every logged step.
+- E1: 270 episodes (30 per seed), fixed eval seeds 10000-10029, EMA weights, N=10. **No policy reaches the 95% coverage success threshold.** Mean coverage: regression 0.290, flow 0.252, DDPM 0.132; success 1.1% for regression and 0% for the other two, every 95% CI including 0. Table: `results/tables/e1_main.md`.
+- E0 is not reproduced and is not claimed: the DDPM baseline trains for ~1.5 epochs, not the reference ~200k steps. This is the M4 fallback "proceed with relative comparisons only" plus the written explanation in docs/04 §4.
+- E3: 720 episodes over N in {1,2,4,8,10,16} on the E1 checkpoints, 20 episodes per seed. Latency scales linearly with N (flow 10.7 ms at N=1 to 66.6 ms at N=16, measured with 2 workers). The pre-registered hypothesis "flow degrades less than DDIM as N falls" is **not supported** at this budget: flow coverage 0.381 at N=1 vs 0.333 at N=10, non-monotonic and within noise; no configuration succeeds.
+- Deviation: eval workers reduced from 4 to 2 after the owner reported the laptop was unresponsive; timings are therefore under two-process contention and are labelled as such.
+
+## 2026-10-19: M6 inference ladder and Triton kernel (agent)
+
+- E9, idle GPU, batch 1, 50 warmup + 200 timed calls, mean/p95: eager 33.46/34.48 ms at N=10; `compile-reduce-overhead` 5.80/5.89 ms (5.8x, 25.8 s compile); `compile-max-autotune` 5.98/6.33 ms (133.6 s); `compile-default` 13.64/14.60 ms; CUDA graph 7.09/7.24 ms (4.7x). CUDA-graph N sweep: 2.29 ms at N=1 to 10.21 ms at N=16. `results/latency.jsonl`.
+- One Triton kernel (fused last Euler step + de-normalization) passes equivalence at fp32 `atol=1e-5` (max diff 1.2e-4) and beats eager 2.2-2.4x, but **loses to compiled PyTorch** (0.83x at batch 1, 0.76x at batch 64). Reported as a negative result; `results/kernel.jsonl`.
+- First compile of the kernel failed: Triton rejects `typing.Any` annotations inside `@triton.jit` functions. The pointer arguments are unannotated and the function carries a `no-untyped-def` ignore for mypy.
+
+## 2026-10-19: M7 deployment loop and E10 (agent)
+
+- ROS 2/Docker are unavailable (G9a NOT RUN), so the documented plain-Python fallback (D7) runs the same policy, env and JSONL interface: fixed 100 ms tick, action queue, deadline-miss counter, observation-staleness latency injection with uniform jitter, naive replace vs temporal ensembling.
+- E10: 315 episodes (3 checkpoints x 3 eval seeds x 5 episodes) at 0/50/100/150/200 ms and 20 ms jitter. Mean coverage 0.293/0.334/0.287/0.334/0.322; zero successes and **zero deadline misses** because measured inference (45-55 ms) stays under the 100 ms period. Temporal ensembling does not recover anything measurable (0.299 at 100 ms, 0.272 vs 0.322 naive at 200 ms). Null result, reported as such.
+- Cold-start bug: the first E10 pass timed the first chunk cold (871 ms), which put the mean above p95. The loop now warms up untimed per episode and `results/deploy.jsonl` was regenerated from scratch.
+
+## 2026-10-19: M8 packaging and MVP close (agent)
+
+- `scripts/make_tables.py` and `scripts/make_figures.py` regenerate every table (`results/tables/`) and figure (`results/figures/`) from `results/*.jsonl`; `scripts/make_readme.py` injects them into `README.md`. No number in the README is hand-typed.
+- README carries the measured tables, the honest null results (no E1 success, Triton loses to compile, E10 flat), the E0 explanation, and the limitations list. Demo video is the one packaging item not produced (no capture path on this host); it is marked as missing in docs/00.
+- Remaining gaps, stated rather than hidden: E2, E4-E8, E11, E12 not run; robomimic/ROS 2/CUDA C++ out of scope on this host; gym-pusht equivalence (R5) still unverified.

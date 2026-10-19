@@ -35,7 +35,8 @@ Fallback (record as ADR if used): plain Python fixed-rate loop with the same `Po
 
 ## 3. Acceptance criteria
 
-- [ ] `results/latency.jsonl` has a row per ladder step with mean, p95, N, mode.
-- [ ] Triton kernel passes equivalence test and has a benchmark vs compile, win or lose.
-- [ ] Control loop logs deadline misses; histogram figure regenerates from the log.
-- [ ] E10 runs with at least 3 seeds per latency level.
+- [x] `results/latency.jsonl` has a row per ladder step with mean, p95, N, mode (16 rows: eager and cudagraph N sweep, three compile modes at N=10).
+- [x] Triton kernel passes equivalence test and has a benchmark vs compile, win or lose. It wins vs eager (2.2-2.4x) and **loses vs compile** (0.76-0.83x); `results/kernel.jsonl`.
+- [x] Control loop logs deadline misses; histogram figure regenerates from the log (`results/figures/e10_latency_hist.png`).
+- [x] E10 runs with 3 training seeds per latency level (3 checkpoints × 3 eval seeds × 5 episodes = 315 rows); measured results are in §3 of [04](04_eval_and_experiments.md).
+

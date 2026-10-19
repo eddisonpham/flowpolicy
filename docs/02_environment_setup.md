@@ -345,14 +345,14 @@ Then a two-container test: one container runs `ros2 run demo_nodes_cpp talker`, 
 | G3 | `torch.compile` (3 modes) | PASS | 2026-10-19 | All three modes compile and run: `default` 4.09 s / 3.04 s, `reduce-overhead` 1.16 s / 0.14 s, `max-autotune` 2.11 s / 0.10 s on two runs (first run pays the compile cost; not a benchmark). Needed `triton-windows==3.8.0.post29`; see §3.1. |
 | G4 | CUDA graph capture | PASS | 2026-10-19 | Capture and replay matched the eager result at rtol/atol 1e-5. |
 | G5 | Triton kernel runs | PASS | 2026-10-19 | `triton 3.8.0 PASS`: kernel compiled, launched and matched `x + y` via `assert_close`. This also clears risk R2 for this host — the assembler worked, so no `TRITON_PTXAS_PATH` workaround is needed. |
-| G6 | CUDA C++ extension builds | NOT RUN | | `nvcc` missing; decision D6. |
-| G7 | PushT closed loop | NOT RUN | | `gym-pusht` not installed yet; belongs to M1.3. |
-| G8 | robosuite Lift closed loop, plus dataset read | NOT RUN | | M1.4; MuJoCo GL backend on Windows is [U]. |
-| G9a | Docker GPU passthrough | NOT RUN | | `docker` not installed; deferred to M1.5. |
-| G9b | ROS 2 pub/sub | NOT RUN | | M1.5, depends on G9a. |
-| G9c | torch in ROS container | NOT RUN | | M1.5, depends on G9a. |
+| G6 | CUDA C++ extension builds | NOT RUN | 2026-10-19 | `nvcc` missing; decision D6 stays closed. `scripts/gates/g6_cuda_extension.py` reports NOT RUN. |
+| G7 | PushT closed loop | PASS | 2026-10-19 | `scripts/gates/g7_pusht_random.py`: 3 random episodes, observation `(96,96,3)` uint8 and state `(2,)`, 300 steps each. Success is not expected for a random policy; this proves reset/step/render/JSONL. Rows in `results/gates/g7.jsonl`. |
+| G8 | robosuite Lift closed loop, plus dataset read | NOT RUN | 2026-10-19 | robosuite not installed; fallback D1 = PushT only (Windows host, no EGL path attempted). |
+| G9a | Docker GPU passthrough | NOT RUN | 2026-10-19 | `docker` not installed; fallback D7 = plain Python loop. |
+| G9b | ROS 2 pub/sub | NOT RUN | 2026-10-19 | Depends on G9a. |
+| G9c | torch in ROS container | NOT RUN | 2026-10-19 | Depends on G9a. |
 
-History: the 2026-10-18 run was five FAILs with one root cause, the driver (577.13). Updating to 617.42 turned G1, G2 and G4 green with the scripts unedited, and left G3 and G5 red for a second reason: no `triton` on Windows. Adding `triton-windows==3.8.0.post29` as a Windows-only dependency (owner decision, §3.1) turned those two green. All five gates now pass on this host; G6-G9c remain NOT RUN.
+History: the 2026-10-18 run was five FAILs with one root cause, the driver (577.13). Updating to 617.42 turned G1, G2 and G4 green with the scripts unedited, and left G3 and G5 red for a second reason: no `triton` on Windows. Adding `triton-windows==3.8.0.post29` as a Windows-only dependency (owner decision, §3.1) turned those two green. G7 was added and passed on 2026-10-19 once the PushT data and `gym-pusht` were installed. G6, G8 and G9a-G9c remain NOT RUN with the fallbacks above; none is treated as a pass.
 
 **Fallback mapping (from the brief):** G1-G5 red means stop and fix before any model or data work (risk R1, no fallback); G8 red means drop robomimic and run PushT only; G9a, G9b, or G9c red means defer the ROS 2 decision and plan for the plain Python control loop; G6 red means drop the CUDA stretch; G3, G4, or G5 red must be fixed before any other work.
 

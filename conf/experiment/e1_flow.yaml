@@ -1,0 +1,6 @@
+# @package _global_
+policy:
+  kind: flow
+run_id: e1_flow_s${seed}
+steps: 1800
+batch_size: 64

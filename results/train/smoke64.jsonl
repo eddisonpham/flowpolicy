@@ -1,0 +1,7 @@
+{"run_id": "smoke64", "policy": "flow", "step": 1, "loss": 1.5062897205352783, "lr": 1.0000000000000002e-06, "steps_per_s": 0.30820247520233746, "elapsed_s": 16.223101377487183, "peak_vram_mb": 4308.9765625}
+{"run_id": "smoke64", "policy": "flow", "step": 5, "loss": 1.4179120063781738, "lr": 3e-06, "steps_per_s": 4.2137834782633155, "elapsed_s": 17.40968346595764, "peak_vram_mb": 4457.732421875}
+{"run_id": "smoke64", "policy": "flow", "step": 10, "loss": 1.3042751550674438, "lr": 5.500000000000001e-06, "steps_per_s": 3.4296234866881545, "elapsed_s": 18.86756944656372, "peak_vram_mb": 4457.732421875}
+{"run_id": "smoke64", "policy": "flow", "step": 15, "loss": 1.0853322744369507, "lr": 8.000000000000001e-06, "steps_per_s": 3.3970222083061135, "elapsed_s": 20.339446783065796, "peak_vram_mb": 4457.732421875}
+{"run_id": "smoke64", "policy": "flow", "step": 20, "loss": 0.9198472499847412, "lr": 1.05e-05, "steps_per_s": 3.4282796057159355, "elapsed_s": 21.79790425300598, "peak_vram_mb": 4457.732421875}
+{"run_id": "smoke64", "policy": "flow", "step": 25, "loss": 0.7497477531433105, "lr": 1.3000000000000001e-05, "steps_per_s": 3.41182844155654, "elapsed_s": 23.263394117355347, "peak_vram_mb": 4457.732421875}
+{"run_id": "smoke64", "policy": "flow", "step": 25, "loss": 0.7497477531433105, "params": 10946674, "elapsed_s": 23.441003561019897, "checkpoint": "checkpoints\\smoke64\\last.pt", "stopped_early": false, "peak_vram_mb": 4457.732421875, "event": "end"}

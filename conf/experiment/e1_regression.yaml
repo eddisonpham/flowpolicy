@@ -1,0 +1,6 @@
+# @package _global_
+policy:
+  kind: regression
+run_id: e1_regression_s${seed}
+steps: 1800
+batch_size: 64

@@ -1,0 +1,56 @@
+defaults:
+  - _self_
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null
+
+run_id: debug
+seed: 0
+steps: 1800
+batch_size: 64
+lr: 0.0001
+weight_decay: 0.000001
+warmup_steps: 200
+grad_clip: 10.0
+ema_decay: 0.999
+precision: bf16
+log_every: 25
+ckpt_every: 1000
+val_every: 250
+out_dir: checkpoints
+results_dir: results
+device: cuda
+limit_train_episodes: null
+resume: ""
+
+policy:
+  kind: flow
+  flow_steps: 10
+  flow_solver: euler
+  flow_time_sampling: uniform
+  ddpm_train_steps: 100
+  ddpm_sample_steps: 10
+
+data:
+  zarr_path: data/pusht/pusht.zarr
+  stats_path: data/pusht/stats.json
+  obs_horizon: 2
+  pred_horizon: 16
+  action_horizon: 8
+  image_size: 96
+  state_dim: 2
+  action_dim: 2
+  val_fraction: 0.1
+
+model:
+  encoder_width: 0.75
+  feature_dim: 256
+  head_dim: 256
+  head_depth: 2
+  transformer_dim: 256
+  transformer_heads: 8
+  transformer_layers: 3

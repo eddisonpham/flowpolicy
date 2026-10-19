@@ -38,3 +38,50 @@ gates:
 # Install the git hooks.
 hooks:
     uv run pre-commit install
+
+# Download/convert PushT to Zarr (idempotent).
+data:
+    uv run python scripts/data/prepare_pusht.py
+
+# E1: three policies x three seeds (GPU, ~90 min at the MVP budget).
+train-e1:
+    bash scripts/train_e1.sh
+
+# Measured memory/throughput table (docs/03 section 4).
+memory:
+    uv run python scripts/bench_memory.py
+
+# E9 latency rows: mode and N are passed as arguments.
+latency mode="eager" steps="10":
+    uv run python scripts/latency.py --ckpt checkpoints/e1_flow_s0/last.pt --mode {{mode}} --steps {{steps}} --config-id e9_{{mode}}_n{{steps}}
+
+# Triton kernel equivalence + benchmark.
+kernel:
+    uv run python scripts/kernel_bench.py
+
+# Tables and figures regenerate from results/*.jsonl; never hand-edited.
+tables:
+    uv run python scripts/make_tables.py
+
+figures:
+    uv run python scripts/make_figures.py
+
+# E1/E3/E10 runners and the 8-episode overfit check (GPU, local only).
+eval-e1:
+    bash scripts/eval_e1.sh
+
+eval-e3:
+    bash scripts/eval_e3.sh
+
+eval-e10:
+    bash scripts/eval_e10.sh
+
+latency-ladder:
+    bash scripts/latency_ladder.sh
+
+overfit:
+    uv run python scripts/overfit.py
+
+# Regenerate README.md from docs/README_template.md and results/tables/.
+readme:
+    uv run python scripts/make_readme.py
