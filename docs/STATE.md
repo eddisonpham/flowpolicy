@@ -6,7 +6,7 @@
 | Current step id | none |
 | Green flag active | no |
 | Last completed step | M0.1 repo scaffold |
-| Evidence | `just test` -> exit 0, 2 passed; clean clone of HEAD -> `just setup && just test` exit 0 |
+| Evidence | `just test` -> exit 0, 2 passed; clean clone of `847a3b1` -> `just setup && just test` exit 0; CI run 39179413619 on `847a3b1` -> success (lint, types, unit) |
 | Spec installed | docs/00-07 + CHANGELOG.md, byte-identical to the uploaded kit |
 
 ## Machine facts (measured 2026-10-18)
@@ -23,7 +23,7 @@
 ## Open questions (waiting on user)
 - Is this Windows laptop the machine that runs GPU work, or is there a separate Ubuntu box? Decides ROS 2 (D7) and the Docker gates.
 - Windows driver 577.13 is below the Linux 580.65.06 minimum in 02 §3.1; cu130 behaviour here is [U] until G1 runs.
-- CI has never executed: `.github/workflows/ci.yml` is unverified until the first push triggers Actions.
+- None on the scaffold. The `smoke` CI job from 01 §4 is deliberately absent until a model exists (M3).
 - Spec correction needed: 02 §9 references `10_risk_register.md`, which does not exist; risks live in 06 §2.
 
 ## Decision log (user answers, dated)
