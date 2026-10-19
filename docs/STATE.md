@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Current milestone | M1 (G1 green; G3/G5 blocked on Triton) |
+| Current milestone | M1 (G1-G5 all PASS; M1.2 not started) |
 | Current step id | none |
 | Green flag active | no |
-| Last completed step | M0.1 repo scaffold |
-| Last attempted step | M1.1 gates G1-G5 — partially green after the driver update, not signed off |
-| Evidence | gate run 2026-10-19 (driver 617.42): G1 PASS, G2 PASS, G3 FAIL, G4 PASS, G5 FAIL; both FAILs are `triton` missing |
+| Last completed step | M1.1 gates G1-G5 |
+| Last attempted step | M1.1 gates G1-G5 — PASS, awaiting owner go-ahead for M1.2 |
+| Evidence | 2026-10-19 `just gates` (driver 617.42, triton-windows 3.8.0.post29): G1 PASS, G2 PASS, G3 PASS, G4 PASS, G5 PASS; `just test` 2 passed |
 | Spec installed | docs/00-07 + CHANGELOG.md, byte-identical to the uploaded kit |
 
 ## Machine facts (measured 2026-10-18, driver updated 2026-10-19)
@@ -17,17 +17,19 @@
 - Driver **617.42**, installed 2026-10-19 with CUDA UMD 13.4; meets the R580 minimum. Previous 577.13 was the G1 cause and is gone.
 - Tooling: uv 0.11.30, just 1.36.0, git 2.54.0, Python 3.12.13 in `.venv`.
 - torch 2.14.1+cu130 and torchvision 0.29.1+cu130 installed from `download.pytorch.org/whl/cu130` (Windows wheel exists).
-- Missing: docker (G9a-G9c, deferred to M1.5), nvcc (G6), triton (G3 and G5).
+- Missing: docker (G9a-G9c, deferred to M1.5), nvcc (G6). Triton is present as `triton-windows==3.8.0.post29` (Windows-only marker).
 
-## M1.1 result: G1 GREEN, G3/G5 BLOCKED ON TRITON
-- 2026-10-19 run of the unchanged scripts: G1 PASS, G2 PASS, G3 FAIL, G4 PASS, G5 FAIL.
-- G1: device visible, capability (12, 0), `sm_120` in `arch_list`, bf16 SDPA (G2) and CUDA graph capture/replay (G4) both correct.
-- G3 and G5 share one cause: no `triton` module in this Windows environment. `torch.compile` on Windows requires it; the cu130 wheel does not ship it and 02 §3.1 says not to install it ad hoc.
-- Consequence per 02 §8: "G3, G4, or G5 red must be fixed before any other work". So M1.2 is blocked until Triton-on-Windows is decided (install a Windows Triton wheel vs record a dated deviation dropping compile/Triton from scope).
+## M1.1 result: ALL FIVE GATES PASS
+- 2026-10-19 run: G1 PASS, G2 PASS, G3 PASS, G4 PASS, G5 PASS, scripts unedited since the first run.
+- G1: device visible, capability (12, 0), `sm_120` in `arch_list`, VRAM 7.93 GiB total / 6.88 GiB free at run time.
+- G2: bf16 autocast + SDPA produce bf16 output. G4: CUDA graph capture and replay match eager.
+- G3 and G5 need Triton, which the cu130 wheel does not ship on Windows. Added `triton-windows==3.8.0.post29` with a `sys_platform == 'win32'` marker, so Linux CI keeps the torch-pinned Triton. Both gates then pass, and the assembler works (risk R2 does not apply on this host).
 - G6-G9c still NOT RUN: no `nvcc`, no Docker, no simulators.
+- `just test` green (2 passed). M1.2 has not been started; it needs the owner's green flag.
 
 ## Open questions (waiting on user)
-- Triton on Windows: install a Windows Triton build to clear G3/G5, or accept a dated deviation that drops compile/Triton (and the E9 compile ladder) from scope?
+- Green flag for M1.2 (device/tensor plumbing and dataset skeletons), the next roadmap row.
+- G6 needs `nvcc`; decide whether the CUDA extension stretch stays in scope (D6).
 - `smoke` CI job from 01 §4 deliberately absent until a model exists (M3).
 - Spec correction needed: 02 §9 references `10_risk_register.md`, which does not exist; risks live in 06 §2.
 
@@ -38,3 +40,5 @@
 - 2026-10-18: "proceed with implementation" taken as the green flag for M0.1 only (roadmap row M0).
 - 2026-10-18: owner confirms this Windows 11 laptop runs all work; there is no separate Ubuntu host.
 - 2026-10-18: "proceed with the recommended ones" -> native Windows for the gates; Docker/G9 deferred to M1.5. Taken as the go-ahead for M1.1.
+- 2026-10-19: owner installed the NVIDIA driver 617.42 (the driver was the only G1 cause).
+- 2026-10-19: owner chose to install a Windows Triton build (`triton-windows==3.8.0.post29`) to clear G3/G5 rather than drop compile/Triton from scope.

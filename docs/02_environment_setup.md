@@ -38,7 +38,7 @@ Measured 2026-10-18 on the owner's host. Commands are the Windows equivalents wh
 | uv version | `uv --version` | 0.11.30 |
 | just version | `just --version` | 1.36.0 |
 | torch installed | `uv pip show torch` | 2.14.1+cu130, resolved from `https://download.pytorch.org/whl/cu130` (Windows `win_amd64` wheel exists) |
-| Triton | `uv pip show triton` | not installed: torch 2.14.1+cu130 on Windows does not pull it, so G5 fails at import |
+| Triton | `uv pip show triton-windows` | `triton-windows==3.8.0.post29` (module `triton.__version__` = 3.8.0), added 2026-10-19 with a `sys_platform == 'win32'` marker. torch 2.14.1+cu130 does not pull it on Windows, so it is a separate pin |
 | nvcc | `nvcc --version` | not installed (G6 cannot run; decision D6) |
 
 The brief says "about 7 GB usable". Measured: 8151 MiB nominal, 3428 MiB free while the desktop is running. Plan all memory estimates against the free VRAM measured at run time, not the nominal figure, and re-measure with nothing else on the GPU.
@@ -54,7 +54,7 @@ The brief says "about 7 GB usable". Measured: 8151 MiB nominal, 3428 MiB free wh
 | torchvision | 0.29.1 | [V] | |
 | CUDA wheel variant | `cu130` | [V] | `cu132` is the newer option; see 3.2. |
 | Python | 3.12 | [V] torch, ROS Jazzy; [U] robosuite | PyTorch 2.14 supports 3.10 to 3.15. |
-| Triton | whatever `torch==2.14.1` pins | [U] | Do not install Triton separately. Record the version with `uv pip show triton` and write it into the table. TBD. |
+| Triton | `triton-windows==3.8.0.post29`, Windows only (`sys_platform == 'win32'`) | [V] 2026-10-19 | Deviation from "whatever `torch==2.14.1` pins": on Windows the torch wheel ships no Triton at all, so the project pins a Windows build instead. Owner decision 2026-10-19. G3 and G5 pass with it. The marker keeps Linux CI on the torch-pinned Triton. [U] exact upstream-triton version this port tracks. |
 | robosuite | 1.5.2 (PyPI release) | [S] | Needs `mujoco>=3.3.0` per a third-party repo; a third-party package lists `robosuite==1.5.2` with `mujoco==3.3.7` as its tested pair. |
 | MuJoCo bindings | 3.3.x (start with 3.3.7) | [S] | Newer MuJoCo releases not checked. TBD. |
 | robomimic | 0.5.0 (2025-06-20), installed from source for dataset tooling only | [V] | v0.4.0 added robosuite 1.5 support and moved datasets to Hugging Face. |
@@ -342,9 +342,9 @@ Then a two-container test: one container runs `ros2 run demo_nodes_cpp talker`, 
 |---|---|---|---|---|
 | G1 | GPU visible, correct arch | PASS | 2026-10-19 | `torch 2.14.1+cu130`, cuda 13.0, device `NVIDIA GeForce RTX 5060 Laptop GPU`, capability (12, 0), `arch_list` contains `sm_120`, VRAM 7.93 GiB total / 6.88 GiB free. The 2026-10-18 FAIL was the driver (577.13); 617.42 fixed it. |
 | G2 | bf16 autocast and SDPA | PASS | 2026-10-19 | `out_dtype torch.bfloat16 shape (2, 8, 64, 32)`. |
-| G3 | `torch.compile` (3 modes) | FAIL | 2026-10-19 | Device is now visible; all three modes (`default`, `reduce-overhead`, `max-autotune`) fail with `TritonMissing: Cannot find a working triton installation`. `torch.compile` on Windows needs `triton`, which the cu130 wheel does not ship. Not a driver problem. |
+| G3 | `torch.compile` (3 modes) | PASS | 2026-10-19 | All three modes compile and run: `default` 4.09 s / 3.04 s, `reduce-overhead` 1.16 s / 0.14 s, `max-autotune` 2.11 s / 0.10 s on two runs (first run pays the compile cost; not a benchmark). Needed `triton-windows==3.8.0.post29`; see §3.1. |
 | G4 | CUDA graph capture | PASS | 2026-10-19 | Capture and replay matched the eager result at rtol/atol 1e-5. |
-| G5 | Triton kernel runs | FAIL | 2026-10-19 | `ModuleNotFoundError: No module named 'triton'` — the same single cause as G3. No Triton wheel is installed in this Windows environment. |
+| G5 | Triton kernel runs | PASS | 2026-10-19 | `triton 3.8.0 PASS`: kernel compiled, launched and matched `x + y` via `assert_close`. This also clears risk R2 for this host — the assembler worked, so no `TRITON_PTXAS_PATH` workaround is needed. |
 | G6 | CUDA C++ extension builds | NOT RUN | | `nvcc` missing; decision D6. |
 | G7 | PushT closed loop | NOT RUN | | `gym-pusht` not installed yet; belongs to M1.3. |
 | G8 | robosuite Lift closed loop, plus dataset read | NOT RUN | | M1.4; MuJoCo GL backend on Windows is [U]. |
@@ -352,7 +352,7 @@ Then a two-container test: one container runs `ros2 run demo_nodes_cpp talker`, 
 | G9b | ROS 2 pub/sub | NOT RUN | | M1.5, depends on G9a. |
 | G9c | torch in ROS container | NOT RUN | | M1.5, depends on G9a. |
 
-History: the 2026-10-18 run was five FAILs with one root cause, the driver. After the driver update to 617.42 (2026-10-19) the same unchanged scripts give G1, G2 and G4 PASS, and G3 and G5 FAIL for one new reason: `triton` is not installed on Windows. Nothing else is red.
+History: the 2026-10-18 run was five FAILs with one root cause, the driver (577.13). Updating to 617.42 turned G1, G2 and G4 green with the scripts unedited, and left G3 and G5 red for a second reason: no `triton` on Windows. Adding `triton-windows==3.8.0.post29` as a Windows-only dependency (owner decision, §3.1) turned those two green. All five gates now pass on this host; G6-G9c remain NOT RUN.
 
 **Fallback mapping (from the brief):** G1-G5 red means stop and fix before any model or data work (risk R1, no fallback); G8 red means drop robomimic and run PushT only; G9a, G9b, or G9c red means defer the ROS 2 decision and plan for the plain Python control loop; G6 red means drop the CUDA stretch; G3, G4, or G5 red must be fixed before any other work.
 

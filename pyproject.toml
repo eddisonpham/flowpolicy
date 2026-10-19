@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "torch==2.14.1",
     "torchvision==0.29.1",
+    "triton-windows==3.8.0.post29 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
