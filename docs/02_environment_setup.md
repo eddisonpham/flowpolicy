@@ -28,9 +28,9 @@ Measured 2026-10-18 on the owner's host. Commands are the Windows equivalents wh
 | OS and version | `uname -a` (MINGW64) | Windows 11, build 26200, shell MINGW64 (Git Bash) |
 | Native Linux or WSL2 | `uname -a` | Native Windows. No WSL2, no separate Ubuntu host (owner, 2026-10-18) |
 | GPU model | `nvidia-smi -L` | NVIDIA GeForce RTX 5060 Laptop GPU |
-| Total / free VRAM | `nvidia-smi --query-gpu=memory.total,memory.free --format=csv` | 8151 MiB total; 3428 MiB free with desktop apps resident |
+| Total / free VRAM | `nvidia-smi --query-gpu=memory.total,memory.free --format=csv` | 8151 MiB total; 3428 MiB free with desktop apps resident, 2640 MiB on a later check — this number moves with whatever else is on the GPU, so measure it at run time |
 | Driver version | `nvidia-smi --query-gpu=driver_version --format=csv,noheader` | 577.13 — **below the CUDA 13.0 minimum (R580 branch)**; gates G1-G5 fail because of it |
-| Compute capability | `python -c "import torch;print(torch.cuda.get_device_capability(0))"` | Not measurable yet: no CUDA device is visible to torch at this driver version. Expected (12, 0) for RTX 50-series [S] |
+| Compute capability | `nvidia-smi --query-gpu=compute_cap --format=csv,noheader` | 12.0 (sm_120), measured. torch cannot report it at driver 577.13, but `torch.cuda.get_arch_list()` contains `sm_120`, so the wheel covers this GPU [V 2026-10-18] |
 | CPU cores | `nproc` | 24 |
 | Python (project) | `.venv` built by uv | 3.12.13 |
 | Python (host) | `python3 --version`, `python --version` | 3.14.5, 3.13.12 — neither is the project interpreter |
@@ -340,7 +340,7 @@ Then a two-container test: one container runs `ros2 run demo_nodes_cpp talker`, 
 
 | Gate | What it proves | Result | Date | Notes |
 |---|---|---|---|---|
-| G1 | GPU visible, correct arch | FAIL | 2026-10-18 | `cudaGetDeviceCount() returned cudaErrorNotSupported, likely using older driver`. torch sees `2.14.1+cu130`, cuda 13.0, but no device. Cause: driver 577.13 < R580. Fix: update the NVIDIA driver, reboot, re-run. |
+| G1 | GPU visible, correct arch | FAIL | 2026-10-18 | `cudaGetDeviceCount() returned cudaErrorNotSupported, likely using older driver`. torch sees `2.14.1+cu130`, cuda 13.0, but no device. Cause: driver 577.13 < R580. Fix: update the NVIDIA driver, reboot, re-run. Pitfall 1 (wrong CUDA wheel) is cleared: `arch_list` contains `sm_120` and the GPU reports compute capability 12.0, so the driver is the only remaining cause. |
 | G2 | bf16 autocast and SDPA | FAIL | 2026-10-18 | Blocked by the same missing device; not a separate finding. |
 | G3 | `torch.compile` (3 modes) | FAIL | 2026-10-18 | Blocked by the same missing device; `torch.compile` was never exercised. |
 | G4 | CUDA graph capture | FAIL | 2026-10-18 | Blocked by the same missing device. |
