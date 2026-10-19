@@ -31,6 +31,10 @@ test: lint types
 test-local:
     uv run pytest -m "integration or gpu or slow"
 
+# Week-1 gates G1-G5 from docs/02 section 7. Local only, needs a CUDA host.
+gates:
+    @set -e; for g in scripts/gates/g*.py; do echo "== $g"; uv run python "$g" || true; done
+
 # Install the git hooks.
 hooks:
     uv run pre-commit install
