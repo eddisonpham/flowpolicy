@@ -28,9 +28,9 @@ Measured 2026-10-18 on the owner's host. Commands are the Windows equivalents wh
 | OS and version | `uname -a` (MINGW64) | Windows 11, build 26200, shell MINGW64 (Git Bash) |
 | Native Linux or WSL2 | `uname -a` | Native Windows. No WSL2, no separate Ubuntu host (owner, 2026-10-18) |
 | GPU model | `nvidia-smi -L` | NVIDIA GeForce RTX 5060 Laptop GPU |
-| Total / free VRAM | `nvidia-smi --query-gpu=memory.total,memory.free --format=csv` | 8151 MiB total; 3428 MiB free with desktop apps resident, 2640 MiB on a later check — this number moves with whatever else is on the GPU, so measure it at run time |
-| Driver version | `nvidia-smi --query-gpu=driver_version --format=csv,noheader` | 577.13 — **below the CUDA 13.0 minimum (R580 branch)**; gates G1-G5 fail because of it |
-| Compute capability | `nvidia-smi --query-gpu=compute_cap --format=csv,noheader` | 12.0 (sm_120), measured. torch cannot report it at driver 577.13, but `torch.cuda.get_arch_list()` contains `sm_120`, so the wheel covers this GPU [V 2026-10-18] |
+| Total / free VRAM | `nvidia-smi --query-gpu=memory.total,memory.free --format=csv` | 8151 MiB total (7.93 GiB); free measured at 3428, 2640 and 6.88 GiB on three different checks — this number moves with whatever else is on the GPU, so measure it at run time |
+| Driver version | `nvidia-smi --query-gpu=driver_version --format=csv,noheader` | **617.42**, installed 2026-10-19, CUDA UMD 13.4 — meets the R580 minimum. Was 577.13 until 2026-10-19; that was the G1 cause |
+| Compute capability | `torch.cuda.get_device_capability()` and `nvidia-smi --query-gpu=compute_cap --format=csv,noheader` | 12.0 (sm_120), measured. `torch.cuda.get_arch_list()` contains `sm_120`, so the wheel covers this GPU [V 2026-10-19] |
 | CPU cores | `nproc` | 24 |
 | Python (project) | `.venv` built by uv | 3.12.13 |
 | Python (host) | `python3 --version`, `python --version` | 3.14.5, 3.13.12 — neither is the project interpreter |
@@ -340,11 +340,11 @@ Then a two-container test: one container runs `ros2 run demo_nodes_cpp talker`, 
 
 | Gate | What it proves | Result | Date | Notes |
 |---|---|---|---|---|
-| G1 | GPU visible, correct arch | FAIL | 2026-10-18 | `cudaGetDeviceCount() returned cudaErrorNotSupported, likely using older driver`. torch sees `2.14.1+cu130`, cuda 13.0, but no device. Cause: driver 577.13 < R580. Fix: update the NVIDIA driver, reboot, re-run. Pitfall 1 (wrong CUDA wheel) is cleared: `arch_list` contains `sm_120` and the GPU reports compute capability 12.0, so the driver is the only remaining cause. |
-| G2 | bf16 autocast and SDPA | FAIL | 2026-10-18 | Blocked by the same missing device; not a separate finding. |
-| G3 | `torch.compile` (3 modes) | FAIL | 2026-10-18 | Blocked by the same missing device; `torch.compile` was never exercised. |
-| G4 | CUDA graph capture | FAIL | 2026-10-18 | Blocked by the same missing device. |
-| G5 | Triton kernel runs | FAIL | 2026-10-18 | Two causes: no CUDA device, and `triton` is not installed in the Windows cu130 environment. Do not install Triton separately (3.1); revisit after the driver fix. |
+| G1 | GPU visible, correct arch | PASS | 2026-10-19 | `torch 2.14.1+cu130`, cuda 13.0, device `NVIDIA GeForce RTX 5060 Laptop GPU`, capability (12, 0), `arch_list` contains `sm_120`, VRAM 7.93 GiB total / 6.88 GiB free. The 2026-10-18 FAIL was the driver (577.13); 617.42 fixed it. |
+| G2 | bf16 autocast and SDPA | PASS | 2026-10-19 | `out_dtype torch.bfloat16 shape (2, 8, 64, 32)`. |
+| G3 | `torch.compile` (3 modes) | FAIL | 2026-10-19 | Device is now visible; all three modes (`default`, `reduce-overhead`, `max-autotune`) fail with `TritonMissing: Cannot find a working triton installation`. `torch.compile` on Windows needs `triton`, which the cu130 wheel does not ship. Not a driver problem. |
+| G4 | CUDA graph capture | PASS | 2026-10-19 | Capture and replay matched the eager result at rtol/atol 1e-5. |
+| G5 | Triton kernel runs | FAIL | 2026-10-19 | `ModuleNotFoundError: No module named 'triton'` — the same single cause as G3. No Triton wheel is installed in this Windows environment. |
 | G6 | CUDA C++ extension builds | NOT RUN | | `nvcc` missing; decision D6. |
 | G7 | PushT closed loop | NOT RUN | | `gym-pusht` not installed yet; belongs to M1.3. |
 | G8 | robosuite Lift closed loop, plus dataset read | NOT RUN | | M1.4; MuJoCo GL backend on Windows is [U]. |
@@ -352,7 +352,7 @@ Then a two-container test: one container runs `ros2 run demo_nodes_cpp talker`, 
 | G9b | ROS 2 pub/sub | NOT RUN | | M1.5, depends on G9a. |
 | G9c | torch in ROS container | NOT RUN | | M1.5, depends on G9a. |
 
-Every FAIL above is one root cause: the driver. Re-run G1-G5 without editing the scripts once the driver is at R580 or newer.
+History: the 2026-10-18 run was five FAILs with one root cause, the driver. After the driver update to 617.42 (2026-10-19) the same unchanged scripts give G1, G2 and G4 PASS, and G3 and G5 FAIL for one new reason: `triton` is not installed on Windows. Nothing else is red.
 
 **Fallback mapping (from the brief):** G1-G5 red means stop and fix before any model or data work (risk R1, no fallback); G8 red means drop robomimic and run PushT only; G9a, G9b, or G9c red means defer the ROS 2 decision and plan for the plain Python control loop; G6 red means drop the CUDA stretch; G3, G4, or G5 red must be fixed before any other work.
 
