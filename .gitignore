@@ -41,6 +41,7 @@ htmlcov/
 .ipynb_checkpoints/
 
 # --- Large / generated artifacts (anchored to repo root) ---
+results/*.tmp
 /data/
 /logs/
 /runs/
