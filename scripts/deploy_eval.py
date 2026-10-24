@@ -20,7 +20,13 @@ def main() -> None:
     parser.add_argument("--seeds", type=int, nargs="+", default=[10000, 10001, 10002])
     parser.add_argument("--episodes-per-seed", type=int, default=5)
     parser.add_argument("--jitter-ms", type=float, default=20.0)
-    parser.add_argument("--strategy", default="naive", choices=["naive", "temporal-ensemble"])
+    # "-r2" variants replan every 2 control steps instead of every action_horizon
+    # steps; temporal ensembling needs that overlap to differ from naive (E12).
+    parser.add_argument(
+        "--strategy",
+        default="naive",
+        choices=["naive", "naive-r2", "temporal-ensemble", "temporal-ensemble-r2"],
+    )
     parser.add_argument("--period-ms", type=float, default=100.0)
     parser.add_argument("--action-horizon", type=int, default=8)
     parser.add_argument("--steps", type=int, default=10)
@@ -38,10 +44,12 @@ def main() -> None:
                 for seed in args.seeds:
                     for episode in range(args.episodes_per_seed):
                         env_seed = seed + episode
+                        replan_every = 2 if args.strategy.endswith("-r2") else 0
                         cfg = LoopConfig(
                             latency_ms=latency,
                             jitter_ms=args.jitter_ms,
-                            strategy=args.strategy,
+                            strategy=args.strategy.removesuffix("-r2"),
+                            replan_every=replan_every,
                             period_ms=args.period_ms,
                             action_horizon=args.action_horizon,
                             sampler_steps=args.steps,
@@ -51,6 +59,8 @@ def main() -> None:
                         row.update(
                             {
                                 "config_id": f"e10_{args.strategy}_l{int(latency)}",
+                                "strategy": args.strategy,
+                                "replan_every": replan_every,
                                 "policy": meta["policy"],
                                 "train_seed": meta["train_seed"],
                                 "eval_seed": env_seed,

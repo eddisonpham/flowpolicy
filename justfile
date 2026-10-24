@@ -43,7 +43,7 @@ hooks:
 data:
     uv run python scripts/data/prepare_pusht.py
 
-# E1: three policies x three seeds (GPU, ~90 min at the MVP budget).
+# E1: 3 policies x SEEDS (default 1) at 12000 steps (~60 min per run, GPU).
 train-e1:
     bash scripts/train_e1.sh
 

@@ -20,7 +20,7 @@ CPU-only.
 uv sync --python 3.12       # or: just setup
 just test                   # ruff, mypy strict, CPU unit tests (CI gate)
 just data                   # download + convert lerobot/pusht to Zarr (about 32 MB)
-just train-e1               # 3 policies x 3 seeds, ~9 min per run on this host
+just train-e1               # 3 policies, 12000 steps each, ~60 min per run; resumable
 just eval-e1                # parallel rollouts -> results/e1.jsonl
 just tables && just figures # regenerate every table/figure from JSONL
 just readme                 # regenerate README.md from the generated tables
@@ -53,6 +53,10 @@ NOT RUN where the host lacks the prerequisite.
 
 {{E10_TABLE}}
 
+`naive` replans when the action queue empties (every 8 control steps); the `-r2` rows
+replan every 2 steps so four chunks overlap, which is the only regime where temporal
+ensembling differs from naive replacement.
+
 ![E10 success](results/figures/e10_success_vs_latency.png)
 ![E10 latency histogram](results/figures/e10_latency_hist.png)
 
@@ -70,14 +74,18 @@ NOT RUN where the host lacks the prerequisite.
 
 ## Honest limitations
 
-- **Simulation only**, 96x96 PushT, small models (about 11 M parameters), 1800 training
-  steps per run (about 1.5 epochs). The reference DDPM recipe trains for ~200k steps; E0 is
+- **Simulation only**, 96x96 PushT, small models (about 11 M parameters), 12000 training
+  steps per run (about 7.6 epochs). The reference DDPM recipe trains for ~200k steps; E0 is
   therefore not a reproduction and is reported as a written explanation in `docs/04`.
-- **At this budget no policy reaches the 95% coverage success threshold** in E1, so the
-  E1 comparison is reported on mean coverage and latency rather than success. This is the
-  main limitation of the result and is stated as a null result, not hidden.
-- Every seed result comes with a bootstrap interval over seeds and episodes; with three
-  seeds those intervals are wide.
+- **One training seed per policy at the 12000-step budget**, not the pre-registered three.
+  The bootstrap intervals in the tables are over the 50 evaluated episodes, so they are
+  episode-level and do not include seed-to-seed variance. A 3-seed sweep at this budget is
+  about 6 GPU-h and was out of reach for this iteration; the 3-seed 1800-step runs are kept
+  as the budget-ablation evidence in `logs/archive/`.
+- **Success rates stay low** (flow 8%, regression 4%, DDPM 0% in E1), far below the
+  published Diffusion Policy numbers. The E1 comparison is therefore about relative
+  coverage and latency, not a reproduction, and E3 treats success ordering between N values
+  as noise-limited.
 - Robomimic, ROS 2, Docker and `nvcc` were unavailable on this host. The documented
   fallbacks were used: PushT only (D1), plain Python loop (D7), no CUDA C++ stretch (D6).
   G8 and G9 are NOT RUN, never reported as passes.

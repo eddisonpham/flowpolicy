@@ -20,7 +20,7 @@ CPU-only.
 uv sync --python 3.12       # or: just setup
 just test                   # ruff, mypy strict, CPU unit tests (CI gate)
 just data                   # download + convert lerobot/pusht to Zarr (about 32 MB)
-just train-e1               # 3 policies x 3 seeds, ~9 min per run on this host
+just train-e1               # 3 policies, 12000 steps each, ~60 min per run; resumable
 just eval-e1                # parallel rollouts -> results/e1.jsonl
 just tables && just figures # regenerate every table/figure from JSONL
 just readme                 # regenerate README.md from the generated tables
@@ -36,9 +36,9 @@ NOT RUN where the host lacks the prerequisite.
 
 | Policy | Seeds | Episodes/seed | Success (95% CI) | Mean coverage |
 |---|---|---|---|---|
-| ddpm | 3 | 30 | 0.0% [0.0%, 0.0%] | 0.132 |
-| flow | 3 | 30 | 0.0% [0.0%, 0.0%] | 0.252 |
-| regression | 3 | 30 | 1.1% [0.0%, 4.4%] | 0.290 |
+| ddpm | 1 | 50 | 0.0% [0.0%, 0.0%] | 0.284 |
+| flow | 1 | 50 | 8.0% [2.0%, 16.0%] | 0.471 |
+| regression | 1 | 50 | 4.0% [0.0%, 10.0%] | 0.303 |
 
 ![E1 success](results/figures/e1_success.png)
 
@@ -46,18 +46,18 @@ NOT RUN where the host lacks the prerequisite.
 
 | Policy | N (sampler steps) | Success (95% CI) | Mean chunk latency ms |
 |---|---|---|---|
-| ddpm | 1 | 0.0% [0.0%, 0.0%] | 11.6 |
-| ddpm | 2 | 0.0% [0.0%, 0.0%] | 15.0 |
-| ddpm | 4 | 0.0% [0.0%, 0.0%] | 22.5 |
-| ddpm | 8 | 0.0% [0.0%, 0.0%] | 37.0 |
-| ddpm | 10 | 0.0% [0.0%, 0.0%] | 44.0 |
-| ddpm | 16 | 0.0% [0.0%, 0.0%] | 68.2 |
-| flow | 1 | 0.0% [0.0%, 0.0%] | 10.7 |
-| flow | 2 | 0.0% [0.0%, 0.0%] | 14.1 |
-| flow | 4 | 0.0% [0.0%, 0.0%] | 21.3 |
-| flow | 8 | 0.0% [0.0%, 0.0%] | 36.7 |
-| flow | 10 | 0.0% [0.0%, 0.0%] | 43.8 |
-| flow | 16 | 0.0% [0.0%, 0.0%] | 66.6 |
+| ddpm | 1 | 0.0% [0.0%, 0.0%] | 10.0 |
+| ddpm | 2 | 0.0% [0.0%, 0.0%] | 14.2 |
+| ddpm | 4 | 0.0% [0.0%, 0.0%] | 22.3 |
+| ddpm | 8 | 0.0% [0.0%, 0.0%] | 39.4 |
+| ddpm | 10 | 0.0% [0.0%, 0.0%] | 47.7 |
+| ddpm | 16 | 0.0% [0.0%, 0.0%] | 76.6 |
+| flow | 1 | 0.0% [0.0%, 0.0%] | 9.6 |
+| flow | 2 | 8.0% [2.0%, 16.0%] | 13.4 |
+| flow | 4 | 14.0% [4.0%, 24.0%] | 21.6 |
+| flow | 8 | 2.0% [0.0%, 6.0%] | 37.2 |
+| flow | 10 | 0.0% [0.0%, 0.0%] | 45.3 |
+| flow | 16 | 14.0% [6.0%, 24.0%] | 69.4 |
 
 ![E3 success](results/figures/e3_success_vs_steps.png)
 ![E3 latency](results/figures/e3_latency_vs_steps.png)
@@ -86,13 +86,19 @@ NOT RUN where the host lacks the prerequisite.
 
 | Latency ms | Strategy | Success (95% CI) | Mean coverage | Deadline misses / episode |
 |---|---|---|---|---|
-| 0 | naive | 0.0% [0.0%, 0.0%] | 0.293 | 0.00 |
-| 50 | naive | 0.0% [0.0%, 0.0%] | 0.334 | 0.00 |
-| 100 | naive | 0.0% [0.0%, 0.0%] | 0.287 | 0.00 |
-| 100 | temporal-ensemble | 0.0% [0.0%, 0.0%] | 0.299 | 0.00 |
-| 150 | naive | 0.0% [0.0%, 0.0%] | 0.334 | 0.00 |
-| 200 | naive | 0.0% [0.0%, 0.0%] | 0.322 | 0.00 |
-| 200 | temporal-ensemble | 0.0% [0.0%, 0.0%] | 0.272 | 0.00 |
+| 0 | naive | 3.3% [0.0%, 8.3%] | 0.439 | 0.05 |
+| 50 | naive | 0.0% [0.0%, 0.0%] | 0.417 | 0.08 |
+| 100 | naive | 0.0% [0.0%, 0.0%] | 0.411 | 0.13 |
+| 100 | naive-r2 | 0.0% [0.0%, 0.0%] | 0.212 | 0.05 |
+| 100 | temporal-ensemble-r2 | 5.0% [0.0%, 11.7%] | 0.386 | 0.02 |
+| 150 | naive | 1.7% [0.0%, 6.7%] | 0.385 | 0.07 |
+| 200 | naive | 3.3% [0.0%, 8.3%] | 0.413 | 0.08 |
+| 200 | naive-r2 | 0.0% [0.0%, 0.0%] | 0.154 | 0.00 |
+| 200 | temporal-ensemble-r2 | 1.7% [0.0%, 5.0%] | 0.323 | 0.18 |
+
+`naive` replans when the action queue empties (every 8 control steps); the `-r2` rows
+replan every 2 steps so four chunks overlap, which is the only regime where temporal
+ensembling differs from naive replacement.
 
 ![E10 success](results/figures/e10_success_vs_latency.png)
 ![E10 latency histogram](results/figures/e10_latency_hist.png)
@@ -122,14 +128,18 @@ NOT RUN where the host lacks the prerequisite.
 
 ## Honest limitations
 
-- **Simulation only**, 96x96 PushT, small models (about 11 M parameters), 1800 training
-  steps per run (about 1.5 epochs). The reference DDPM recipe trains for ~200k steps; E0 is
+- **Simulation only**, 96x96 PushT, small models (about 11 M parameters), 12000 training
+  steps per run (about 7.6 epochs). The reference DDPM recipe trains for ~200k steps; E0 is
   therefore not a reproduction and is reported as a written explanation in `docs/04`.
-- **At this budget no policy reaches the 95% coverage success threshold** in E1, so the
-  E1 comparison is reported on mean coverage and latency rather than success. This is the
-  main limitation of the result and is stated as a null result, not hidden.
-- Every seed result comes with a bootstrap interval over seeds and episodes; with three
-  seeds those intervals are wide.
+- **One training seed per policy at the 12000-step budget**, not the pre-registered three.
+  The bootstrap intervals in the tables are over the 50 evaluated episodes, so they are
+  episode-level and do not include seed-to-seed variance. A 3-seed sweep at this budget is
+  about 6 GPU-h and was out of reach for this iteration; the 3-seed 1800-step runs are kept
+  as the budget-ablation evidence in `logs/archive/`.
+- **Success rates stay low** (flow 8%, regression 4%, DDPM 0% in E1), far below the
+  published Diffusion Policy numbers. The E1 comparison is therefore about relative
+  coverage and latency, not a reproduction, and E3 treats success ordering between N values
+  as noise-limited.
 - Robomimic, ROS 2, Docker and `nvcc` were unavailable on this host. The documented
   fallbacks were used: PushT only (D1), plain Python loop (D7), no CUDA C++ stretch (D6).
   G8 and G9 are NOT RUN, never reported as passes.

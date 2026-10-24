@@ -1,10 +1,10 @@
 {
   "run_id": "e1_flow_s0",
   "policy": "flow",
-  "step": 1800,
-  "loss": 0.0914100706577301,
+  "step": 12000,
+  "loss": 0.05398879945278168,
   "params": 10946674,
-  "elapsed_s": 548.8081479072571,
+  "elapsed_s": 3737.609759092331,
   "checkpoint": "checkpoints\\e1_flow_s0\\last.pt",
   "stopped_early": false,
   "peak_vram_mb": 4457.732421875

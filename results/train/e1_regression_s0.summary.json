@@ -1,10 +1,10 @@
 {
   "run_id": "e1_regression_s0",
   "policy": "regression",
-  "step": 1800,
-  "loss": 0.08217554539442062,
+  "step": 12000,
+  "loss": 0.024099240079522133,
   "params": 9835890,
-  "elapsed_s": 531.7674837112427,
+  "elapsed_s": 3815.7972695827484,
   "checkpoint": "checkpoints\\e1_regression_s0\\last.pt",
   "stopped_early": false,
   "peak_vram_mb": 4440.77587890625

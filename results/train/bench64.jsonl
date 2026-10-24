@@ -1,0 +1,5 @@
+{"run_id": "bench64", "policy": "flow", "step": 1, "loss": 1.5062897205352783, "lr": 1.0000000000000002e-06, "steps_per_s": 6.94791248915192, "elapsed_s": 1.4392812252044678, "peak_vram_mb": 4308.9765625}
+{"run_id": "bench64", "policy": "flow", "step": 10, "loss": 1.3042751550674438, "lr": 5.500000000000001e-06, "steps_per_s": 4.055689849046252, "elapsed_s": 3.9049530029296875, "peak_vram_mb": 4457.732421875}
+{"run_id": "bench64", "policy": "flow", "step": 20, "loss": 0.9198472499847412, "lr": 1.05e-05, "steps_per_s": 3.550532761406593, "elapsed_s": 6.721431732177734, "peak_vram_mb": 4457.732421875}
+{"run_id": "bench64", "policy": "flow", "step": 30, "loss": 0.5566884875297546, "lr": 1.55e-05, "steps_per_s": 3.567609811729934, "elapsed_s": 9.524428844451904, "peak_vram_mb": 4457.732421875}
+{"run_id": "bench64", "policy": "flow", "step": 30, "loss": 0.5566884875297546, "params": 10946674, "elapsed_s": 9.734482526779175, "checkpoint": "checkpoints\\bench64\\last.pt", "stopped_early": false, "peak_vram_mb": 4457.732421875, "event": "end"}

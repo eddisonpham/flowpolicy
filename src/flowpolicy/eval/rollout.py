@@ -79,6 +79,13 @@ def rollout_episode(
     max_steps: int = MAX_STEPS,
     record_latency: bool = True,
 ) -> dict[str, float]:
+    # Seed the policy's stochastic sampler per episode. Without this the flow
+    # sampler draws from whatever global RNG state the worker happens to hold,
+    # so the same eval seed gave different rollouts on different runs and the
+    # number of episodes per worker silently changed the result.
+    torch.manual_seed(env_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(env_seed)
     obs_horizon = policy.obs_horizon
     env = PushTEnv()
     try:
@@ -136,7 +143,6 @@ def _init_worker(checkpoint: str, device: str, sampler_steps: int, action_horizo
 
 
 def _run_episodes(seeds: list[int]) -> list[dict[str, Any]]:
-    torch.manual_seed(seeds[0])
     out = []
     for seed in seeds:
         result = rollout_episode(

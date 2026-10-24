@@ -34,7 +34,11 @@ class LoopConfig:
     latency_ms: float = 0.0
     jitter_ms: float = 0.0
     strategy: str = "naive"  # naive | temporal-ensemble
-    ensemble_weight: float = 0.5
+    # Replan every N control steps. 0 means replan only when the queued
+    # predictions run out (action_horizon). Temporal ensembling needs N <
+    # action_horizon so consecutive chunks overlap; otherwise every step is
+    # covered by exactly one chunk and ensembling is identical to naive.
+    replan_every: int = 0
 
 
 def _obs_batch(
@@ -59,6 +63,11 @@ def run_episode(
     if cfg.strategy not in {"naive", "temporal-ensemble"}:
         raise ValueError(f"unknown chunk strategy {cfg.strategy!r}")
     rng = rng or np.random.default_rng(seed)
+    # Same per-episode seeding as the eval harness: the chunk sampler must not
+    # depend on the global RNG state left over from earlier episodes.
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     env = PushTEnv()
     try:
         obs = env.reset(seed=seed)
@@ -76,6 +85,11 @@ def run_episode(
             [obs["state"]] * policy.obs_horizon, maxlen=policy.obs_horizon
         )
         queue: list[np.ndarray] = []
+        # Temporal ensembling: every chunk contributes a prediction for the
+        # absolute control step it targets; the action executed at step t is the
+        # mean over all chunks that predicted t (ACT, Zhao et al. 2023).
+        ensemble_sums: dict[int, np.ndarray] = {}
+        ensemble_counts: dict[int, int] = {}
         # Warm up outside the timed region (docs/05: latency is measured warmed
         # up). Without this, the first chunk includes CUDA context and kernel
         # load and biases the mean.
@@ -93,7 +107,12 @@ def run_episode(
             delayed = buffer[0]
             frames.append(delayed["image"])
             states.append(delayed["state"])
-            if not queue:
+            needs_chunk = (
+                steps not in ensemble_sums if cfg.strategy == "temporal-ensemble" else not queue
+            )
+            if cfg.replan_every and steps % cfg.replan_every == 0:
+                needs_chunk = True
+            if needs_chunk:
                 batch = _obs_batch(frames, states, device)
                 if device.startswith("cuda"):
                     torch.cuda.synchronize()
@@ -106,15 +125,22 @@ def run_episode(
                 if elapsed_ms > cfg.period_ms:
                     deadline_misses += 1
                 new = chunk[0, : cfg.action_horizon].float().cpu().numpy()
-                if cfg.strategy == "temporal-ensemble" and queue:
-                    old = np.stack(queue)
-                    n = min(len(old), len(new))
-                    blended = (1.0 - cfg.ensemble_weight) * old[:n] + cfg.ensemble_weight * new[:n]
-                    queue = [*blended, *new[n:]]
+                if cfg.strategy == "temporal-ensemble":
+                    for i, value in enumerate(new):
+                        key = steps + i
+                        ensemble_sums[key] = ensemble_sums.get(key, np.zeros_like(value)) + value
+                        ensemble_counts[key] = ensemble_counts.get(key, 0) + 1
                 else:
                     queue = list(new)
                 actions_returned += 1
-            action = np.clip(queue.pop(0), 0.0, 512.0)
+            if cfg.strategy == "temporal-ensemble":
+                action = (ensemble_sums.pop(steps) / ensemble_counts.pop(steps)).astype(np.float32)
+                for key in [k for k in ensemble_sums if k < steps]:
+                    ensemble_sums.pop(key)
+                    ensemble_counts.pop(key)
+            else:
+                action = queue.pop(0)
+            action = np.clip(action, 0.0, 512.0)
             obs, _reward, done, info = env.step(action)
             buffer.append(obs)
             steps += 1
