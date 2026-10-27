@@ -28,7 +28,9 @@ def read(name: str) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def e1_bar(rows: list[dict[str, Any]]) -> None:
+def e1_bar(
+    rows: list[dict[str, Any]], name: str = "e1_success.png", title: str | None = None
+) -> None:
     labels, points, errs = [], [], []
     for (policy,), group in sorted(group_rows(rows, ["policy"]).items()):
         point, lo, hi = bootstrap_ci(group)
@@ -41,46 +43,92 @@ def e1_bar(rows: list[dict[str, Any]]) -> None:
     )
     ax.set_ylabel("success rate")
     ax.set_ylim(0, 1)
-    ax.set_title("E1 PushT (error bars: 95% bootstrap over seeds/episodes)")
+    ax.set_title(title or "E1 PushT (error bars: 95% bootstrap over seeds/episodes)")
     fig.tight_layout()
-    fig.savefig(OUT / "e1_success.png", dpi=150)
+    fig.savefig(OUT / name, dpi=150)
     plt.close(fig)
 
 
 def e3_curves(rows: list[dict[str, Any]]) -> None:
-    grouped = group_rows(rows, ["policy", "sampler_steps"])
+    """E3: sampler steps vs success and vs measured latency, one series per scheduler."""
+    grouped = group_rows(rows, ["scheduler", "sampler_steps"])
     fig, ax = plt.subplots(figsize=(5.5, 3.4))
-    for policy in sorted({key[0] for key in grouped}):
+    for scheduler in sorted({key[0] for key in grouped}):
         xs, ys, lo, hi = [], [], [], []
-        for (_policy, steps), group in sorted((k, v) for k, v in grouped.items() if k[0] == policy):
+        for (_sched, steps), group in sorted(
+            (k, v) for k, v in grouped.items() if k[0] == scheduler
+        ):
             point, low, high = bootstrap_ci(group)
             xs.append(steps)
             ys.append(point)
             lo.append(point - low)
             hi.append(high - point)
-        ax.errorbar(xs, ys, yerr=[lo, hi], marker="o", capsize=3, label=policy)
+        ax.errorbar(xs, ys, yerr=[lo, hi], marker="o", capsize=3, label=scheduler)
     ax.set_xlabel("sampler steps N")
     ax.set_ylabel("success rate")
     ax.set_ylim(0, 1)
-    ax.set_title("E3: integration steps vs success")
+    ax.set_title("E3: integration steps vs success (pretrained DP, 50 episodes/N)")
     ax.legend()
     fig.tight_layout()
     fig.savefig(OUT / "e3_success_vs_steps.png", dpi=150)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(5.5, 3.4))
-    for policy in sorted({key[0] for key in grouped}):
+    for scheduler in sorted({key[0] for key in grouped}):
         xs, ys = [], []
-        for (_policy, steps), group in sorted((k, v) for k, v in grouped.items() if k[0] == policy):
+        for (_sched, steps), group in sorted(
+            (k, v) for k, v in grouped.items() if k[0] == scheduler
+        ):
             xs.append(steps)
             ys.append(np.mean([r["latency_mean_ms"] for r in group]))
-        ax.plot(xs, ys, marker="o", label=policy)
+        ax.plot(xs, ys, marker="o", label=scheduler)
     ax.set_xlabel("sampler steps N")
     ax.set_ylabel("chunk latency (ms)")
-    ax.set_title("E3: integration steps vs measured latency")
+    ax.set_title("E3: integration steps vs measured latency (batch 1)")
     ax.legend()
     fig.tight_layout()
     fig.savefig(OUT / "e3_latency_vs_steps.png", dpi=150)
+    plt.close(fig)
+
+
+def e0_bars(rows: list[dict[str, Any]], name: str = "e0_validation.png") -> None:
+    """E0: the pretrained checkpoint against the model card's published numbers."""
+    grouped = sorted(
+        group_rows(rows, ["scheduler", "sampler_steps"]).items(),
+        key=lambda kv: (kv[0][0], kv[0][1]),
+    )
+    labels, points, errs, covs = [], [], [], []
+    for (scheduler, steps), group in grouped:
+        point, lo, hi = bootstrap_ci(group)
+        cov_point, cov_lo, cov_hi = bootstrap_ci(group, metric="coverage")
+        labels.append(f"{scheduler}@{steps}")
+        points.append(point)
+        errs.append([point - lo, hi - point])
+        covs.append((cov_point, cov_lo, cov_hi))
+    fig, axes = plt.subplots(1, 2, figsize=(8.4, 3.3))
+    axes[0].bar(labels, points, yerr=np.array(errs).T, capsize=4, color="#4c72b0")
+    axes[0].axhline(0.654, ls="--", color="k", lw=1)
+    axes[0].annotate("published 65.4%", (0, 0.654), xytext=(0, 4), textcoords="offset points")
+    axes[0].set_ylabel("success rate")
+    axes[0].set_ylim(0, 1)
+    axes[0].set_title("E0: pretrained DP through our harness")
+    axes[1].bar(
+        labels,
+        [c[0] for c in covs],
+        yerr=[
+            [c[0] - c[1] for c in covs],
+            [c[2] - c[0] for c in covs],
+        ],
+        capsize=4,
+        color="#dd8452",
+    )
+    axes[1].axhline(0.955, ls="--", color="k", lw=1)
+    axes[1].annotate("published 0.955", (0, 0.955), xytext=(0, 4), textcoords="offset points")
+    axes[1].set_ylabel("mean max coverage")
+    axes[1].set_ylim(0, 1.05)
+    axes[1].set_title("E0: coverage, 50 paired episodes each")
+    fig.tight_layout()
+    fig.savefig(OUT / name, dpi=150)
     plt.close(fig)
 
 
@@ -121,10 +169,18 @@ def e10_curve(rows: list[dict[str, Any]]) -> None:
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    e1 = read("e1.jsonl")
+    e0 = read("e0.jsonl")
+    if e0:
+        e0_bars(e0)
+        print("wrote e0_validation.png")
+    e1 = read("ablation/e1.jsonl")
     if e1:
-        e1_bar(e1)
-        print("wrote e1_success.png")
+        e1_bar(
+            e1,
+            "e1_ablation_success.png",
+            "Ablation: from-scratch policies, 12000 steps (95% bootstrap)",
+        )
+        print("wrote e1_ablation_success.png")
     e3 = read("e3.jsonl")
     if e3:
         e3_curves(e3)

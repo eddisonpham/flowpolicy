@@ -9,6 +9,10 @@ default:
 setup:
     uv sync --python 3.12
 
+# Add the optional pretrained-policy backend on top of the sync. Re-run after `just setup`.
+setup-pretrained:
+    bash scripts/setup_pretrained.sh
+
 # Format then lint.
 format:
     uv run ruff format .
@@ -31,6 +35,18 @@ test: lint types
 test-local:
     uv run pytest -m "integration or gpu or slow"
 
+# Read-only environment check: versions, CUDA, backend, checkpoint. No GPU work.
+doctor:
+    uv run python scripts/doctor.py
+
+# One-screen summary of everything measured so far, from results/*.jsonl.
+report:
+    uv run python scripts/report.py
+
+# Serve the policy over local HTTP (contract: docs/05 section 4). Ctrl-C to stop.
+serve ckpt="hf:lerobot/diffusion_pusht" port="8000" steps="10":
+    uv run python scripts/serve.py --ckpt {{ckpt}} --port {{port}} --steps {{steps}}
+
 # Week-1 gates G1-G5 from docs/02 section 7. Local only, needs a CUDA host.
 gates:
     @set -e; for g in scripts/gates/g*.py; do echo "== $g"; uv run python "$g" || true; done
@@ -43,7 +59,7 @@ hooks:
 data:
     uv run python scripts/data/prepare_pusht.py
 
-# E1: 3 policies x SEEDS (default 1) at 12000 steps (~60 min per run, GPU).
+# Ablation: train the three from-scratch policies, 3 seeds at 12000 steps (~60 min each).
 train-e1:
     bash scripts/train_e1.sh
 
@@ -51,9 +67,9 @@ train-e1:
 memory:
     uv run python scripts/bench_memory.py
 
-# E9 latency rows: mode and N are passed as arguments.
+# E9 latency rows on the pretrained checkpoint: mode and N are passed as arguments.
 latency mode="eager" steps="10":
-    uv run python scripts/latency.py --ckpt checkpoints/e1_flow_s0/last.pt --mode {{mode}} --steps {{steps}} --config-id e9_{{mode}}_n{{steps}}
+    uv run python scripts/latency.py --ckpt hf:lerobot/diffusion_pusht --mode {{mode}} --steps {{steps}} --config-id e9_{{mode}}_n{{steps}}
 
 # Triton kernel equivalence + benchmark.
 kernel:
@@ -66,15 +82,21 @@ tables:
 figures:
     uv run python scripts/make_figures.py
 
-# E1/E3/E10 runners and the 8-episode overfit check (GPU, local only).
-eval-e1:
-    bash scripts/eval_e1.sh
+# E0/E3/E10 runners plus the ablation re-run and the 8-episode overfit check (GPU, local).
+# eval-e0 is the acceptance gate for the pretrained adapter: its rows must land near
+# the model card's 65.4 % success, otherwise the observation/action mapping is wrong.
+eval-e0:
+    bash scripts/eval_e0.sh
 
 eval-e3:
     bash scripts/eval_e3.sh
 
 eval-e10:
     bash scripts/eval_e10.sh
+
+# Ablation only: re-measure the from-scratch checkpoints (results/ablation/e1.jsonl).
+eval-e1:
+    bash scripts/eval_e1.sh
 
 latency-ladder:
     bash scripts/latency_ladder.sh

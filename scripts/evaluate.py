@@ -13,17 +13,23 @@ from flowpolicy.eval.rollout import evaluate
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt", type=Path, required=True)
+    # Not type=Path: `hf:<repo_id>` is a pretrained checkpoint, not a path.
+    parser.add_argument("--ckpt", required=True)
     parser.add_argument("--config-id", required=True)
     parser.add_argument("--episodes", type=int, default=50)
     parser.add_argument("--seed-start", type=int, default=10000)
-    parser.add_argument("--train-seeds", type=int, nargs="+", default=[0, 1, 2])
+    parser.add_argument("--train-seeds", type=int, nargs="*", default=[])
     parser.add_argument("--steps", type=int, default=10)
+    parser.add_argument(
+        "--scheduler", default="ddim", choices=["ddim", "ddpm"], help="pretrained only"
+    )
     parser.add_argument("--action-horizon", type=int, default=8)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--out", type=Path, default=Path("results/eval.jsonl"))
     args = parser.parse_args()
+    if not str(args.ckpt).startswith("hf:") and not args.train_seeds:
+        parser.error("--train-seeds is required for trained checkpoints")
 
     seeds = list(range(args.seed_start, args.seed_start + args.episodes))
     rows = evaluate(
@@ -36,6 +42,7 @@ def main() -> None:
         action_horizon=args.action_horizon,
         workers=args.workers,
         device=args.device,
+        scheduler=args.scheduler,
     )
     success = np.array([r["success"] for r in rows])
     coverage = np.array([r["coverage"] for r in rows])

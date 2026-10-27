@@ -2,7 +2,7 @@
 
 Pass criteria (docs/05 section 1): fp32 atol 1e-5 against the PyTorch
 reference. The benchmark is honest: it reports the batch-1 case even if the
-kernel loses to eager or compiled PyTorch, and writes results/kernel.jsonl.
+kernel loses to eager or compiled PyTorch, and writes results/ablation/kernel.jsonl.
 """
 
 from __future__ import annotations
@@ -60,14 +60,14 @@ def main() -> None:
         }
         rows.append(row)
         print(json.dumps(row))
-    out = Path("results/kernel.jsonl")
+    out = Path("results/ablation/kernel.jsonl")
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("a", encoding="utf-8") as fh:
         for row in rows:
             fh.write(json.dumps(row) + "\n")
     if not all(row["equivalent"] for row in rows):
         raise SystemExit("FAIL: kernel does not match the reference")
-    print("PASS: kernel equivalent, results/kernel.jsonl")
+    print("PASS: kernel equivalent, results/ablation/kernel.jsonl")
 
 
 if __name__ == "__main__":

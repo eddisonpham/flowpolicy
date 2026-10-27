@@ -1,7 +1,7 @@
 """Regenerate every table from results/*.jsonl (no hand-edited numbers).
 
-Inputs: results/e1.jsonl, results/e3.jsonl, results/latency.jsonl,
-results/deploy.jsonl, results/memory.jsonl. Missing files are skipped.
+Pretrained-checkpoint rows live in results/{e0,e3,latency,deploy}.jsonl; the
+from-scratch ablation lives in results/ablation/. Missing files are skipped.
 """
 
 from __future__ import annotations
@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from flowpolicy.eval.metrics import bootstrap_ci, group_rows
+from flowpolicy.eval.report import headline_table
 
 ROOT = Path("results")
+ABLATION = ROOT / "ablation"
 OUT = ROOT / "tables"
 
 
@@ -28,31 +30,64 @@ def fmt_ci(point: float, lo: float, hi: float) -> str:
 
 def e1_table(rows: list[dict[str, Any]]) -> str:
     lines = [
-        "| Policy | Seeds | Episodes/seed | Success (95% CI) | Mean coverage |",
-        "|---|---|---|---|---|",
+        "| Policy | Seeds | Episodes/seed | Success per seed | Success (95% CI) | Mean coverage |",
+        "|---|---|---|---|---|---|",
     ]
     for policy, group in sorted(group_rows(rows, ["policy"]).items()):
         name = policy[0]
         point, lo, hi = bootstrap_ci(group)
         seeds = len({r["train_seed"] for r in group})
         per_seed = len(group) / seeds
+        # The CI resamples training seeds, so the spread across them has to be visible.
+        parts = group_rows(group, ["train_seed"])
+        hits = [
+            f"{sum(int(r['success']) for r in parts[k])}/{len(parts[k])}" for k in sorted(parts)
+        ]
         coverage = sum(float(r["coverage"]) for r in group) / len(group)
         lines.append(
-            f"| {name} | {seeds} | {per_seed:.0f} | {fmt_ci(point, lo, hi)} | {coverage:.3f} |"
+            f"| {name} | {seeds} | {per_seed:.0f} | {', '.join(sorted(hits))} "
+            f"| {fmt_ci(point, lo, hi)} | {coverage:.3f} |"
         )
     return "\n".join(lines) + "\n"
 
 
+def e0_table(rows: list[dict[str, Any]]) -> str:
+    """E0: the pretrained checkpoint through our harness (the adapter's acceptance gate)."""
+    lines = [
+        "| Scheduler | N | Episodes | Success (95% CI) | Mean coverage (95% CI) "
+        "| Mean chunk latency ms |",
+        "|---|---|---|---|---|---|",
+    ]
+    grouped = group_rows(rows, ["scheduler", "sampler_steps"])
+    for (scheduler, steps), group in sorted(grouped.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        point, lo, hi = bootstrap_ci(group)
+        cov_point, cov_lo, cov_hi = bootstrap_ci(group, metric="coverage")
+        coverage = f"{cov_point:.3f} [{cov_lo:.3f}, {cov_hi:.3f}]"
+        latency = sum(float(r["latency_mean_ms"]) for r in group) / len(group)
+        lines.append(
+            f"| {scheduler} | {steps} | {len(group)} | {fmt_ci(point, lo, hi)} | {coverage} "
+            f"| {latency:.1f} |"
+        )
+    return chr(10).join(lines) + chr(10)
+
+
 def e3_table(rows: list[dict[str, Any]]) -> str:
     lines = [
-        "| Policy | N (sampler steps) | Success (95% CI) | Mean chunk latency ms |",
-        "|---|---|---|---|",
+        "| Scheduler | N (sampler steps) | Success (95% CI) | Mean coverage (95% CI) "
+        "| Mean chunk latency ms |",
+        "|---|---|---|---|---|",
     ]
-    grouped = group_rows(rows, ["policy", "sampler_steps"])
-    for (policy, steps), group in sorted(grouped.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+    grouped = group_rows(rows, ["scheduler", "sampler_steps"])
+    for (scheduler, steps), group in sorted(grouped.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         point, lo, hi = bootstrap_ci(group)
+        # Coverage moves by ~0.05 between resamples, so it carries its own interval;
+        # without it the ladder looks ordered when it is noise.
+        cov_point, cov_lo, cov_hi = bootstrap_ci(group, metric="coverage")
+        coverage = f"{cov_point:.3f} [{cov_lo:.3f}, {cov_hi:.3f}]"
         latency = sum(float(r["latency_mean_ms"]) for r in group) / len(group)
-        lines.append(f"| {policy} | {steps} | {fmt_ci(point, lo, hi)} | {latency:.1f} |")
+        lines.append(
+            f"| {scheduler} | {steps} | {fmt_ci(point, lo, hi)} | {coverage} | {latency:.1f} |"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -126,11 +161,14 @@ def memory_table(rows: list[dict[str, Any]]) -> str:
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     jobs = {
-        "e1_main.md": (ROOT / "e1.jsonl", e1_table),
+        "e0_validation.md": (ROOT / "e0.jsonl", e0_table),
         "e3_steps.md": (ROOT / "e3.jsonl", e3_table),
         "e9_latency.md": (ROOT / "latency.jsonl", latency_table),
         "e10_deploy.md": (ROOT / "deploy.jsonl", deploy_table),
-        "m2_memory.md": (ROOT / "memory.jsonl", memory_table),
+        # Ablation: the from-scratch policies and the training-cost measurements that
+        # the pretrained checkpoint replaced (docs/04 section 4).
+        "e1_ablation.md": (ABLATION / "e1.jsonl", e1_table),
+        "m2_memory.md": (ABLATION / "memory.jsonl", memory_table),
     }
     for name, (path, fn) in jobs.items():
         rows = read(path)
@@ -140,12 +178,21 @@ def main() -> None:
         text = fn(rows)
         (OUT / name).write_text(text)
         print(f"wrote {OUT / name} ({len(rows)} rows)")
+    headline = headline_table(
+        {
+            "e0": read(ROOT / "e0.jsonl"),
+            "e3": read(ROOT / "e3.jsonl"),
+            "e9": read(ROOT / "latency.jsonl"),
+            "e10": read(ROOT / "deploy.jsonl"),
+        }
+    )
+    (OUT / "headline.md").write_text(headline)
+    print(f"wrote {OUT / 'headline.md'}")
 
-    kernel_rows = read(ROOT / "kernel.jsonl")
+    kernel_rows = read(ABLATION / "kernel.jsonl")
     if kernel_rows:
         (OUT / "kernel.md").write_text(kernel_table(kernel_rows))
         print(f"wrote {OUT / 'kernel.md'} ({len(kernel_rows)} rows)")
-
     overfit_path = ROOT / "overfit" / "summary.json"
     if overfit_path.exists():
         (OUT / "overfit.md").write_text(overfit_table(json.loads(overfit_path.read_text())))

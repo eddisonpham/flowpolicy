@@ -15,7 +15,8 @@ from flowpolicy.eval.rollout import assert_seed_disjoint, load_policy
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpts", type=Path, nargs="+", required=True)
+    # Not type=Path: `hf:<repo_id>` is a pretrained checkpoint, not a path.
+    parser.add_argument("--ckpts", nargs="+", required=True)
     parser.add_argument("--latencies", type=float, nargs="+", default=[0, 50, 100, 150, 200])
     parser.add_argument("--seeds", type=int, nargs="+", default=[10000, 10001, 10002])
     parser.add_argument("--episodes-per-seed", type=int, default=5)
@@ -30,16 +31,21 @@ def main() -> None:
     parser.add_argument("--period-ms", type=float, default=100.0)
     parser.add_argument("--action-horizon", type=int, default=8)
     parser.add_argument("--steps", type=int, default=10)
-    parser.add_argument("--train-seeds", type=int, nargs="+", default=[0, 1, 2])
+    parser.add_argument(
+        "--scheduler", default="ddim", choices=["ddim", "ddpm"], help="pretrained only"
+    )
+    parser.add_argument("--train-seeds", type=int, nargs="*", default=[])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--out", type=Path, default=Path("results/deploy.jsonl"))
     args = parser.parse_args()
 
+    if not all(str(c).startswith("hf:") for c in args.ckpts) and not args.train_seeds:
+        parser.error("--train-seeds is required for trained checkpoints")
     assert_seed_disjoint(args.train_seeds, args.seeds)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("a", encoding="utf-8") as fh:
         for ckpt in args.ckpts:
-            policy, meta = load_policy(ckpt, device=args.device)
+            policy, meta = load_policy(ckpt, device=args.device, scheduler=args.scheduler)
             for latency in args.latencies:
                 for seed in args.seeds:
                     for episode in range(args.episodes_per_seed):
@@ -66,6 +72,8 @@ def main() -> None:
                                 "eval_seed": env_seed,
                                 "episode": episode,
                                 "checkpoint": str(ckpt),
+                                "params": meta["params"],
+                                "scheduler": args.scheduler,
                                 "task": "pusht",
                             }
                         )

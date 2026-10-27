@@ -15,7 +15,8 @@ from flowpolicy.eval.rollout import load_policy
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt", type=Path, required=True)
+    # Not type=Path: `hf:<repo_id>` is a pretrained checkpoint, not a path.
+    parser.add_argument("--ckpt", required=True)
     parser.add_argument(
         "--mode",
         required=True,
@@ -28,6 +29,9 @@ def main() -> None:
         ],
     )
     parser.add_argument("--steps", type=int, default=10)
+    parser.add_argument(
+        "--scheduler", default="ddim", choices=["ddim", "ddpm"], help="pretrained only"
+    )
     parser.add_argument("--warmup", type=int, default=50)
     parser.add_argument("--iters", type=int, default=200)
     parser.add_argument("--device", default="cuda")
@@ -35,7 +39,9 @@ def main() -> None:
     parser.add_argument("--config-id", default="e9")
     args = parser.parse_args()
 
-    policy, meta = load_policy(args.ckpt, device=args.device, use_ema=True)
+    policy, meta = load_policy(
+        args.ckpt, device=args.device, use_ema=True, scheduler=args.scheduler
+    )
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
     row = benchmark(

@@ -12,6 +12,8 @@ dependencies = [
     "matplotlib>=3.10",
     "pandas>=2.2",
     "pyarrow>=21",
+    # Reads the pretrained checkpoint's own normalization buffers (models/pretrained.py).
+    "safetensors>=0.4",
     "torch==2.14.1",
     "torchvision==0.29.1",
     "triton-windows==3.8.0.post29 ; sys_platform == 'win32'",
@@ -65,6 +67,13 @@ warn_unreachable = true
 
 [[tool.mypy.overrides]]
 module = ["gym_pusht.*"]
+ignore_missing_imports = true
+
+# Optional backend for the pretrained checkpoint (docs/02 section 3.1). It is
+# deliberately not a project dependency: lerobot 0.6.1 caps torch at <2.12 and this
+# project pins torch 2.14.1, so it is installed `--no-deps` on top of the sync.
+[[tool.mypy.overrides]]
+module = ["lerobot.*", "diffusers.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

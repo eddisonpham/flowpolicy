@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from flowpolicy.envs.pusht import MAX_STEPS, PushTEnv
-from flowpolicy.models.policies import BasePolicy
+from flowpolicy.models.policies import PolicyLike
 
 
 @dataclass
@@ -54,7 +54,7 @@ def _obs_batch(
 
 
 def run_episode(
-    policy: BasePolicy,
+    policy: PolicyLike,
     seed: int,
     cfg: LoopConfig,
     device: str = "cuda",

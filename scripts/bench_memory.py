@@ -1,6 +1,6 @@
 """Measure peak VRAM and steps/s for batch sizes 32/64/128 (docs/03 section 4).
 
-Writes results/memory.jsonl. The "fits" flag uses free VRAM measured before
+Writes results/ablation/memory.jsonl. The "fits" flag uses free VRAM measured before
 the run minus 0.5 GiB, not the nominal 8 GiB.
 """
 
@@ -32,7 +32,7 @@ def main() -> None:
     policy = build_policy("flow", stats, 2, 16, 2, 2, ModelConfig()).to(device)
     opt = torch.optim.AdamW(policy.parameters(), lr=1e-4)
     free_before, _total = torch.cuda.mem_get_info()
-    out = Path("results/memory.jsonl")
+    out = Path("results/ablation/memory.jsonl")
     out.parent.mkdir(parents=True, exist_ok=True)
 
     def batch(n: int) -> dict[str, torch.Tensor]:

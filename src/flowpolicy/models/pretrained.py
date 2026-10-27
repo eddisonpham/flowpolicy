@@ -1,0 +1,172 @@
+"""Run a pretrained Diffusion Policy checkpoint behind the repo's Policy interface.
+
+The checkpoint is `lerobot/diffusion_pusht` (Apache-2.0): Diffusion Policy trained on
+gym-pusht with n_obs_steps=2, horizon=16, n_action_steps=8 -- the same observation
+horizon and action chunk this repo uses, and the same environment and success metric
+(max overlap >= 95 %) that `flowpolicy.envs.pusht` measures.
+
+Model code is the `lerobot` package's. What this module owns is the glue, because the
+2024 checkpoint and the 2026 library disagree about where normalization lives:
+
+- `lerobot` >= 0.6 moved normalization out of the policy into a processor pipeline that
+  this checkpoint does not ship, so `from_pretrained` logs the eight `normalize_inputs.*`
+  / `unnormalize_outputs.*` tensors as unexpected keys and drops them. They are still the
+  statistics the weights were trained with, so we read them from `model.safetensors`.
+- The three transforms below (`MEAN_STD` for images, `MIN_MAX` for state and actions)
+  are the checkpoint's `normalization_mapping`, not this repo's train-time min/max.
+
+Getting any of that wrong produces plausible-looking actions and a success rate near
+zero, so docs/04 keeps the published 65.4 % as the acceptance gate for this file.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import torch
+from torch import Tensor, nn
+
+DEFAULT_HF_ID = "lerobot/diffusion_pusht"
+
+# `lerobot` 0.6.1 requires torch < 2.12 and this project pins torch 2.14.1. The import
+# happens lazily so that the rest of the package (eval of trained checkpoints, tests,
+# CI) does not depend on the optional backend being installed.
+_BACKEND_HINT = (
+    "the pretrained-policy backend needs `lerobot` and `diffusers`; "
+    "run `just setup-pretrained` (see docs/02 section 3.4)"
+)
+
+
+def import_backend() -> tuple[Any, Any]:
+    """Import the optional backend, with a message that says what to run."""
+    try:
+        from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+        from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+    except ImportError as exc:  # pragma: no cover - exercised only without the extra
+        raise ImportError(_BACKEND_HINT) from exc
+    return DiffusionPolicy, DDIMScheduler
+
+
+def normalize_image(image: Tensor, mean: Tensor, std: Tensor) -> Tensor:
+    """VISUAL = MEAN_STD: uint8-derived [0, 1] image to zero-mean unit-variance."""
+    return (image - mean) / std
+
+
+def normalize_state(state: Tensor, low: Tensor, high: Tensor) -> Tensor:
+    """STATE = MIN_MAX: raw pixels to [-1, 1] with the dataset's own extremes."""
+    return 2.0 * (state - low) / (high - low) - 1.0
+
+
+def denormalize_action(action: Tensor, low: Tensor, high: Tensor) -> Tensor:
+    """ACTION = MIN_MAX: [-1, 1] back to pixels, the inverse of `normalize_state`."""
+    return (action + 1.0) * 0.5 * (high - low) + low
+
+
+def load_normalization(hf_id: str = DEFAULT_HF_ID) -> dict[str, Tensor]:
+    """Read the checkpoint's normalization buffers (see the module docstring)."""
+    from huggingface_hub import hf_hub_download
+    from safetensors import safe_open
+
+    path = hf_hub_download(hf_id, "model.safetensors")
+    keys = {
+        "image_mean": "normalize_inputs.buffer_observation_image.mean",
+        "image_std": "normalize_inputs.buffer_observation_image.std",
+        "state_low": "normalize_inputs.buffer_observation_state.min",
+        "state_high": "normalize_inputs.buffer_observation_state.max",
+        "action_low": "unnormalize_outputs.buffer_action.min",
+        "action_high": "unnormalize_outputs.buffer_action.max",
+    }
+    stats: dict[str, Tensor] = {}
+    with safe_open(path, framework="pt") as handle:
+        available = set(handle.keys())
+        missing = [key for key in keys.values() if key not in available]
+        if missing:
+            raise ValueError(f"{hf_id} is missing normalization buffers: {missing}")
+        for name, key in keys.items():
+            stats[name] = handle.get_tensor(key).clone()
+    return stats
+
+
+class PretrainedDiffusionPolicy(nn.Module):
+    """Diffusion Policy checkpoint wrapped as `PolicyLike` (docs/01 section 2).
+
+    `scheduler` picks how the reverse process is truncated: "ddim" (deterministic, the
+    only sane choice when `steps` < num_train_timesteps) or "ddpm" (the checkpoint's own
+    scheduler, stochastic at every step, which is what the published 65.4 % used).
+    """
+
+    def __init__(
+        self,
+        hf_id: str = DEFAULT_HF_ID,
+        *,
+        device: str = "cuda",
+        scheduler: str = "ddim",
+        pretrained_step: int = 175_000,
+    ) -> None:
+        super().__init__()
+        DiffusionPolicy, DDIMScheduler = import_backend()
+        self.hf_id = hf_id
+        self.policy = DiffusionPolicy.from_pretrained(hf_id).eval()
+        cfg = self.policy.config
+        self.obs_horizon = int(cfg.n_obs_steps)
+        self.pred_horizon = int(cfg.horizon)
+        self.action_horizon = int(cfg.n_action_steps)
+        self.action_dim = int(cfg.action_feature.shape[0])
+        self.pretrained_step = pretrained_step
+        self.scheduler = scheduler
+
+        stats = load_normalization(hf_id)
+        # Annotated so mypy sees tensors, not `Tensor | Module` (register_buffer).
+        self.image_mean: Tensor
+        self.image_std: Tensor
+        self.state_low: Tensor
+        self.state_high: Tensor
+        self.action_low: Tensor
+        self.action_high: Tensor
+        self.register_buffer("image_mean", stats["image_mean"].float())
+        self.register_buffer("image_std", stats["image_std"].float())
+        self.register_buffer("state_low", stats["state_low"].float())
+        self.register_buffer("state_high", stats["state_high"].float())
+        self.register_buffer("action_low", stats["action_low"].float())
+        self.register_buffer("action_high", stats["action_high"].float())
+
+        # `self.to` rather than `self.policy.to`: the normalization buffers are this
+        # module's, and they have to travel with the network.
+        self.to(device)
+        if scheduler == "ddim":
+            base = self.policy.diffusion.noise_scheduler
+            self.policy.diffusion.noise_scheduler = DDIMScheduler(
+                num_train_timesteps=int(base.config.num_train_timesteps),
+                beta_start=float(base.config.beta_start),
+                beta_end=float(base.config.beta_end),
+                beta_schedule=str(base.config.beta_schedule),
+                clip_sample=bool(base.config.clip_sample),
+                clip_sample_range=float(base.config.clip_sample_range),
+                prediction_type=str(base.config.prediction_type),
+                set_alpha_to_one=False,
+                steps_offset=0,
+            )
+        elif scheduler != "ddpm":
+            raise ValueError(f"unknown scheduler {scheduler!r}")
+
+    @torch.no_grad()
+    def predict_chunk(
+        self,
+        obs: dict[str, Tensor],
+        steps: int = 10,
+        noise: Tensor | None = None,
+        **_: Any,
+    ) -> Tensor:
+        if steps < 1:
+            raise ValueError("steps must be >= 1")
+        image = normalize_image(obs["image"].float(), self.image_mean, self.image_std)
+        state = normalize_state(obs["state"].float(), self.state_low, self.state_high)
+        self.policy.diffusion.num_inference_steps = int(steps)
+        actions = self.policy.predict_action_chunk(
+            {"observation.image": image, "observation.state": state}, noise=noise
+        )
+        chunk = denormalize_action(actions, self.action_low, self.action_high)
+        return chunk.clamp_(0.0, 512.0)
+
+    def num_parameters(self) -> int:
+        return sum(p.numel() for p in self.policy.parameters())

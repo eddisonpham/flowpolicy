@@ -15,7 +15,15 @@ flowchart LR
   CK --> EX[deploy/ export + chunker]
   EX --> PN[ROS2 policy node]
   SB[ROS2 sim bridge: env + latency/disturbance wrappers] <-- topics --> PN
+  HF[(HF checkpoint: lerobot/diffusion_pusht)] --> PA[models/pretrained.py adapter]
+  PA --> EV
+  PA --> EX
 ```
+
+Since 2026-10-27 (D11) the policy eval and deploy load is normally the HF checkpoint via the
+adapter (bottom right), not a trained `CK`. Both satisfy the same interface, which is why the
+episode loop, the control loop, the latency ladder and the tables did not change when the
+substrate did.
 
 ## 2. Module boundaries and interfaces
 
@@ -29,6 +37,14 @@ class Policy(nn.Module):
 Batch = {"image": [B,To,C,H,W] float, "state": [B,To,Ds], "action": [B,Tp,Da]}   # normalized
 Obs   = {"image": [B,To,C,H,W], "state": [B,To,Ds]}                              # raw; policy normalizes
 ```
+
+Since 2026-10-27 the interface eval and deploy depend on is the structural `PolicyLike`
+protocol (`models/policies.py`): `obs_horizon`, `pred_horizon`, `action_dim`,
+`predict_chunk(obs, **sampler_kw)`, `num_parameters()`. `BasePolicy` implements it for trained
+checkpoints; `PretrainedDiffusionPolicy` (`models/pretrained.py`) implements it for the HF
+checkpoint and carries its own normalization, because the checkpoint's statistics and this
+repo's train-time min/max `Normalizer` are not the same transform. Sampler settings stay call
+arguments: for the pretrained policy, `steps` sets the DDIM ladder length per call.
 
 Rules: normalization stats live inside the checkpoint and are applied inside the policy. The encoder is shared code, instantiated per policy. Sampler settings (steps N, solver) are call arguments, never baked into weights.
 
@@ -61,5 +77,7 @@ Jobs: `lint` (ruff), `types` (mypy strict on `src/`), `unit` (pytest -m "unit an
 ## 6. Acceptance criteria
 
 - [ ] `just setup && just test` works from a clean clone.
-- [ ] A new policy can be added by implementing `Policy` only; eval and deploy need no edits.
+- [x] A new policy can be added by implementing `Policy`/`PolicyLike` only; eval and deploy
+  needed no edits when the pretrained adapter landed on 2026-10-27 (one load branch in
+  `rollout.load_policy`, no change to the episode loop, the control loop or the tables).
 - [ ] CI is green without a GPU.

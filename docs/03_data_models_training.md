@@ -1,5 +1,11 @@
 # 03. Data, models, training
 
+**Status 2026-10-27 (D11): this file documents the ablation path.** The stack now runs the
+pretrained checkpoint `lerobot/diffusion_pusht`; nothing here is on the critical path, but the
+trainer, the policies and this recipe stay runnable (`just train-e1`) because the ablation rows
+in `results/ablation/` are the evidence for the pivot (4-7 % success at 12000 steps is a floor
+effect). The recipe table in section 2 is still the reference these local runs fall short of.
+
 Tags: [V] verified, [S] secondary source, [U] unverified. Access date for all sources: 2026-10-18. Links: [01](01_architecture.md) [04](04_eval_and_experiments.md)
 
 ## 1. Data
@@ -48,7 +54,7 @@ Common: shared encoder (ResNet-18 GN, global avg pool or spatial softmax; state 
 
 Estimate by component: parameters x bytes (bf16 weights plus fp32 master and Adam states, about 12 to 16 bytes per param trainable, [U] confirm), activations scale with batch x To x image size. Procedure: `torch.cuda.reset_peak_memory_stats()`, run 20 steps at batch sizes 32/64/128/256, record `max_memory_allocated`, fill the table below. Anything above the measured free VRAM minus 0.5 GiB is flagged "does not fit"; mitigations in order: smaller batch, activation checkpointing in the encoder, 84x84 images, gradient accumulation.
 
-Measured 2026-10-19 on the RTX 5060 Laptop (7.93 GiB total; 6.98 GiB free before the run), 96x96, To=2, Tp=16, bf16, 10.95 M parameters. Raw rows: `results/memory.jsonl`; table: `results/tables/m2_memory.md`.
+Measured 2026-10-19 on the RTX 5060 Laptop (7.93 GiB total; 6.98 GiB free before the run), 96x96, To=2, Tp=16, bf16, 10.95 M parameters. Raw rows: `results/ablation/memory.jsonl`; table: `results/tables/m2_memory.md`.
 
 | Model + data | Batch | Peak VRAM | Steps/s | Fits |
 |---|---|---|---|---|

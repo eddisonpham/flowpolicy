@@ -18,10 +18,13 @@ import numpy as np
 import torch
 import zarr
 from numpy.typing import NDArray
+from torch import Tensor
 from torch.utils.data import Dataset
 
 
-def split_episodes(n_episodes: int, val_fraction: float, seed: int) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+def split_episodes(
+    n_episodes: int, val_fraction: float, seed: int
+) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
     if not 0.0 <= val_fraction < 1.0:
         raise ValueError("val_fraction must be in [0, 1)")
     rng = np.random.default_rng(seed)
@@ -36,6 +39,23 @@ def split_episodes(n_episodes: int, val_fraction: float, seed: int) -> tuple[NDA
     return train, val
 
 
+def random_crop(image: Tensor, size: int, generator: torch.Generator | None = None) -> Tensor:
+    """Crop [B,To,3,H,W] to `size` pixels; one offset per sample, shared by its frames.
+
+    Train-time augmentation (docs/03 section 3): a per-sample offset keeps the
+    frames of one window spatially consistent, and eval keeps the full image.
+    """
+    b, to, c, h, w = image.shape
+    if size > min(h, w):
+        raise ValueError(f"crop size {size} exceeds image {h}x{w}")
+    if size == min(h, w):
+        return image
+    oy = torch.randint(0, h - size + 1, (b,), generator=generator).tolist()
+    ox = torch.randint(0, w - size + 1, (b,), generator=generator).tolist()
+    crops = [image[i, :, :, oy[i] : oy[i] + size, ox[i] : ox[i] + size] for i in range(b)]
+    return torch.stack(crops)
+
+
 @dataclass
 class ZarrArrays:
     image: NDArray[np.uint8]  # [N, H, W, 3]
@@ -44,7 +64,9 @@ class ZarrArrays:
     episode_ends: NDArray[np.int64]  # [E]
 
 
-def load_zarr(path: str | Path, load_images: bool = True, image_limit: int | None = None) -> ZarrArrays:
+def load_zarr(
+    path: str | Path, load_images: bool = True, image_limit: int | None = None
+) -> ZarrArrays:
     root: Any = zarr.open_group(str(path), mode="r")
     episode_ends = np.asarray(root["episode_ends"][:], dtype=np.int64)
     state = np.asarray(root["state"][:], dtype=np.float32)
@@ -89,7 +111,9 @@ class WindowDataset(Dataset[dict[str, torch.Tensor]]):
             frames.append(np.arange(s, e, dtype=np.int64))
             frame_episode.append(np.full(e - s, ep, dtype=np.int64))
         self.frames = np.concatenate(frames) if frames else np.empty(0, dtype=np.int64)
-        self.frame_episode = np.concatenate(frame_episode) if frame_episode else np.empty(0, dtype=np.int64)
+        self.frame_episode = (
+            np.concatenate(frame_episode) if frame_episode else np.empty(0, dtype=np.int64)
+        )
 
     def __len__(self) -> int:
         return int(self.frames.shape[0])
@@ -114,7 +138,13 @@ class WindowDataset(Dataset[dict[str, torch.Tensor]]):
             "action": torch.from_numpy(action.copy()),
         }
 
-    def get_batch(self, samples: NDArray[np.int64]) -> dict[str, torch.Tensor]:
+    def get_batch(
+        self,
+        samples: NDArray[np.int64],
+        *,
+        crop_size: int | None = None,
+        generator: torch.Generator | None = None,
+    ) -> dict[str, torch.Tensor]:
         """Vectorized batch build; named separately so tests can check indices."""
         obs_idx = np.empty((samples.shape[0], self.obs_horizon), dtype=np.int64)
         act_idx = np.empty((samples.shape[0], self.pred_horizon), dtype=np.int64)
@@ -123,8 +153,13 @@ class WindowDataset(Dataset[dict[str, torch.Tensor]]):
             obs_idx[row] = o
             act_idx[row] = a
         image = self.arrays.image[obs_idx]  # [B,To,H,W,3]
+        images = (
+            torch.from_numpy(np.ascontiguousarray(image)).permute(0, 1, 4, 2, 3).float() / 255.0
+        )
+        if crop_size is not None:
+            images = random_crop(images, crop_size, generator)
         batch = {
-            "image": torch.from_numpy(np.ascontiguousarray(image)).permute(0, 1, 4, 2, 3).float() / 255.0,
+            "image": images,
             "state": torch.from_numpy(self.arrays.state[obs_idx]),
             "action": torch.from_numpy(self.arrays.action[act_idx]),
         }

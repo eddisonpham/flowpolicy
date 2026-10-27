@@ -13,6 +13,9 @@ class DataConfig:
     pred_horizon: int = 16
     action_horizon: int = 8
     image_size: int = 96
+    # Train-time random crop: side length in pixels. 0 disables. 84 on 96px
+    # images mirrors the reference recipe; eval always uses the full image.
+    augment_crop: int = 0
     state_dim: int = 2
     action_dim: int = 2
     val_fraction: float = 0.1
@@ -74,5 +77,7 @@ class TrainConfig:
             raise ValueError("horizons must be positive")
         if self.policy.kind not in {"flow", "ddpm", "regression"}:
             raise ValueError(f"unknown policy kind {self.policy.kind!r}")
+        if self.data.augment_crop < 0 or self.data.augment_crop > self.data.image_size:
+            raise ValueError("augment_crop must be 0 (off) or within the image size")
         if self.precision not in {"bf16", "fp32"}:
             raise ValueError(f"unknown precision {self.precision!r}")

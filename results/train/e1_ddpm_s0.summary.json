@@ -2,10 +2,10 @@
   "run_id": "e1_ddpm_s0",
   "policy": "ddpm",
   "step": 12000,
-  "loss": 0.06198382005095482,
+  "loss": 0.016324548050761223,
   "params": 10946674,
-  "elapsed_s": 1264.7884984016418,
+  "elapsed_s": 3549.318789243698,
   "checkpoint": "checkpoints\\e1_ddpm_s0\\last.pt",
   "stopped_early": false,
-  "peak_vram_mb": 4457.3974609375
+  "peak_vram_mb": 4457.7333984375
 }

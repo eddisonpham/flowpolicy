@@ -14,17 +14,17 @@ from typing import Any
 import numpy as np
 import torch
 
-from flowpolicy.models.policies import BasePolicy
+from flowpolicy.models.policies import PolicyLike
 
 
-def static_obs(policy: BasePolicy, device: str, batch: int = 1) -> dict[str, torch.Tensor]:
+def static_obs(policy: PolicyLike, device: str, batch: int = 1) -> dict[str, torch.Tensor]:
     to = policy.obs_horizon
     image = torch.rand(batch, to, 3, 96, 96, device=device)
     state = torch.rand(batch, to, 2, device=device) * 512.0
     return {"image": image, "state": state}
 
 
-def static_noise(policy: BasePolicy, device: str, batch: int = 1) -> torch.Tensor:
+def static_noise(policy: PolicyLike, device: str, batch: int = 1) -> torch.Tensor:
     return torch.randn(batch, policy.pred_horizon, policy.action_dim, device=device)
 
 
@@ -46,7 +46,7 @@ def _timeit(fn: Callable[[], Any], warmup: int, iters: int, cuda: bool) -> np.nd
 
 
 def benchmark(
-    policy: BasePolicy,
+    policy: PolicyLike,
     mode: str,
     *,
     steps: int = 10,

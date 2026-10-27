@@ -1,6 +1,8 @@
 # 00. Overview
 
-Status: Stage 1 draft. Written 2026-10-18. See [CHANGELOG](CHANGELOG.md).
+Status: Stage 1 draft. Written 2026-10-18. **Pivoted 2026-10-27 (D11): the stack now runs
+a pretrained checkpoint and the from-scratch models are an ablation.** See
+[CHANGELOG](CHANGELOG.md) and the deviations log in [04](04_eval_and_experiments.md).
 Source of truth for scope: the FlowPolicy Agent Brief. This file restates it, then records what Stage 1 research changed.
 
 ---
@@ -16,6 +18,7 @@ Source of truth for scope: the FlowPolicy Agent Brief. This file restates it, th
 | [05_inference_and_deployment.md](05_inference_and_deployment.md) | latency ladder, Triton, ROS 2, async chunking |
 | [06_decisions_and_risks.md](06_decisions_and_risks.md) | D1-D10 and risk register |
 | [07_roadmap.md](07_roadmap.md) | milestones M0-M8, agent rules, packaging |
+| [MODEL_CARD.md](MODEL_CARD.md) | the borrowed policy and this stack: data, intended use, metrics with intervals, limitations |
 
 Coding agent: read 07 first, then the file for the current milestone.
 
@@ -40,7 +43,19 @@ Do not start model code until G1 to G5 pass.
 
 ## 1. Goals
 
-Build and honestly evaluate a from-scratch conditional flow-matching visuomotor policy (pi0-style, small scale) on PushT and robomimic, compare it against a DDPM/DDIM diffusion policy and an ACT-style regression policy with identical data and encoder, optimize inference at batch size 1, and deploy it in a fixed-rate ROS 2 loop with latency and disturbance experiments. All on one consumer GPU with about 7 GB usable VRAM and 24 CPU cores.
+Build and honestly evaluate a **measurement and deployment stack for a pretrained
+visuomotor policy** on PushT: one known-good checkpoint behind a single policy interface,
+validated against its published success rate, optimized at batch size 1, and deployed in a
+fixed-rate loop with latency injection and async chunking experiments. All on one consumer
+GPU with about 7 GB usable VRAM and 24 CPU cores.
+
+Original goal, kept as the ablation: train a conditional flow-matching policy (pi0-style,
+small scale) from scratch and compare it against DDPM/DDIM and ACT-style regression
+baselines with identical data and encoder. At the budget this host allows (12000 steps, about
+7.6 epochs of PushT) the three policies land at 4-7 % success, which cannot order them and
+cannot express a deployment degradation. The pivot was the owner's call on 2026-10-27; the
+ablation rows are kept under `results/ablation/` because that floor effect is the reason for
+the pivot.
 
 ## 2. Scope and non-goals
 
@@ -53,11 +68,11 @@ Non-goals: real-robot work, language-conditioned VLA (decision D5, revisit at we
 | Criterion | Measured how | Status |
 |---|---|---|
 | Resumable trainer with resume-equivalence test | CI test on tiny model; tolerance stated | PASS 2026-10-19: `tests/unit/test_trainer_resume.py`, `rtol=1e-5` (tolerance-based, not bit-exact) |
-| Three-policy comparison, at least 3 training seeds, CIs | Raw per-episode JSONL, scripts regenerate tables | PASS 2026-10-19: `results/e1.jsonl` (270 episodes), `results/tables/e1_main.md` |
-| PushT reproduction sanity check against published Diffusion Policy numbers | Within a pre-stated tolerance, or written explanation | NOT REPRODUCED (M4 fallback): 1800 steps vs ~200k in the reference; written explanation in `docs/04` §4 |
-| Integration-step vs success vs latency figure | Sweep N in {1,2,4,8,10,16} | PASS 2026-10-19: `results/figures/e3_success_vs_steps.png`, `e3_latency_vs_steps.png` |
-| One Triton kernel with honest benchmark, including the case where it loses | `triton.testing.do_bench` plus equivalence test | PASS 2026-10-19: equivalent (max diff 1.2e-4), 2.2-2.4x eager, **0.76-0.83x compiled** (it loses to compile); `results/kernel.jsonl` |
-| ROS 2 (or plain-Python fallback) fixed-rate loop with latency injection | Latency histogram, deadline-miss log | PASS with fallback D7 (plain Python): `results/deploy.jsonl`, `results/figures/e10_success_vs_latency.png`, `e10_latency_hist.png` |
+| Three-policy comparison, at least 3 training seeds, CIs | Raw per-episode JSONL, scripts regenerate tables | PASS 2026-10-19 as an **ablation**: `results/ablation/e1.jsonl` (450 episodes, 3 seeds x 50 paired), all success CIs overlapping |
+| PushT reproduction sanity check against published Diffusion Policy numbers | Within a pre-stated tolerance, or written explanation | **PASS 2026-10-27** via the pretrained checkpoint: E0 reproduces the model card (64.0 % vs 65.4 % success, 0.924 vs 0.955 overlap) with our env wrapper, harness and metric. The from-scratch route did not reproduce it (1800/12000 steps vs ~200k in the reference); written explanation in `docs/04` §4 |
+| Integration-step vs success vs latency figure | Sweep N in {1,2,4,8,10,16} | Re-run 2026-10-27 on the pretrained checkpoint: `results/figures/e3_success_vs_steps.png`, `e3_latency_vs_steps.png` |
+| One Triton kernel with honest benchmark, including the case where it loses | `triton.testing.do_bench` plus equivalence test | PASS 2026-10-19 on the ablation model: equivalent (max diff 1.2e-4), 2.2-2.4x eager, **0.76-0.83x compiled** (it loses to compile); `results/ablation/kernel.jsonl`. Not attempted on the pretrained model |
+| ROS 2 (or plain-Python fallback) fixed-rate loop with latency injection | Latency histogram, deadline-miss log | PASS with fallback D7 (plain Python), re-run 2026-10-27 on the pretrained checkpoint: `results/deploy.jsonl`, `results/figures/e10_success_vs_latency.png`, `e10_latency_hist.png` |
 | Week 8 packaging complete | README, results tables, failure analysis, demo video | README/tables/figures generated by scripts; **demo video not recorded** (no capture path on this host) |
 
 No number in this table is filled in until it is measured.
@@ -82,6 +97,14 @@ The brief was written with some assumptions that are out of date as of 2026-10-1
 - **ACT:** Action Chunking with Transformers; regression-style chunk predictor.
 - **EMA:** exponential moving average of weights, used at evaluation time.
 - **Resume equivalence:** an interrupted-and-resumed run matches an uninterrupted run for the next M steps to a stated tolerance.
+- **N (sampler steps):** how many denoising steps the sampler takes per action chunk. The policy is trained with 100 steps; N is an inference-time choice, so it trades latency for fidelity (E3).
+- **DDIM vs DDPM sampling:** DDPM's step injects fresh noise every iteration, so it cannot be truncated below its trained length; DDIM's is deterministic, which is what makes an N sweep meaningful. Same trained weights, different sampler.
+- **Chunk / action horizon:** the policy predicts `pred_horizon` (16) actions at once and the loop executes `action_horizon` (8) of them before replanning.
+- **Deadline miss:** one chunk whose measured inference time exceeded the control period (100 ms here). Counted per episode, from measured time, not from a simulation.
+- **Temporal ensembling:** averaging the predictions of several overlapping chunks for the same control step, instead of letting the newest chunk replace the old ones (E12).
+- **Episode-level interval:** a bootstrap interval that resamples eval episodes only. It cannot speak to training-run variance; it is what a single borrowed checkpoint allows.
+- **Floor effect:** a measurement whose subject scores near zero, so a difference cannot be resolved no matter how many episodes are added. The ablation's 4-7 % success is one.
+- **`PolicyLike`:** the structural interface (`obs_horizon`, `pred_horizon`, `action_dim`, `predict_chunk`, `num_parameters`) that eval, deployment and the latency ladder depend on; satisfied by trained checkpoints and by the pretrained adapter alike.
 - **Gate:** a pass/fail smoke test that must pass before the dependent work starts.
 - **SDPA:** `torch.nn.functional.scaled_dot_product_attention`.
 

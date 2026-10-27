@@ -1,109 +1,181 @@
 # FlowPolicy
 
-A from-scratch conditional flow-matching visuomotor policy (pi0-style, small scale),
-compared against a DDPM/DDIM diffusion policy and an ACT-style regression baseline on
-PushT, with batch-1 inference engineering and a fixed-rate deployment loop.
+An inference and deployment stack for a **pretrained** visuomotor policy on PushT. One
+known-good checkpoint behind a single policy interface, a parallel rollout harness, a
+batch-1 latency ladder, and a fixed-rate control loop with injected observation latency.
+Every number in this README is generated from `results/*.jsonl` by the scripts in
+`scripts/`; nothing is hand-typed.
 
-**Status: MVP complete, small-scale.** Every number below is generated from
-`results/*.jsonl` by `scripts/make_tables.py` and `scripts/make_figures.py`; no metric is
-hand-typed. The models are deliberately small and trained for a short budget on one
-8 GB laptop GPU, so the success rates are a scaled-down result, not a reproduction of
-the published Diffusion Policy numbers. See **Limitations**.
+The policy is `lerobot/diffusion_pusht` (Apache-2.0, 262.7 M parameters, Diffusion Policy
+trained on gym-pusht). We did not train it and claim no credit for it. What is ours is the
+measurement and deployment machinery around it, plus the honest answer to "what does a
+policy that actually works cost to run?" -- which turns out to differ from what a model
+small enough to train on a laptop suggests.
 
-All work ran on one Windows 11 laptop (RTX 5060 Laptop, 8 GB, driver 617.42), Python
-3.12, torch 2.14.1+cu130. GPU, simulator and deployment tests are local only; CI is
-CPU-only.
+All work ran on one Windows 11 laptop (RTX 5060 Laptop, 8 GB, driver 617.42), Python 3.12,
+torch 2.14.1+cu130. GPU, simulator and deployment runs are local only; CI is CPU-only.
+Pretrained rows were measured 2026-10-27; ablation rows 2026-10-19 to 2026-10-24.
 
-## Quick start
+## The results in four lines
+
+| Question | Measured answer | Source |
+|---|---|---|
+| Does the harness reproduce the published policy? | Yes: 64.0% [52.0%, 78.0%] success and 0.924 [0.878, 0.953] mean coverage over 50 paired episodes at DDIM N=10, against the model card's 65.4 % / 0.955 | E0 |
+| How few sampler steps still work? | 0.121 at N=1; 0.716 at N=2; 0.885 at N=4; 0.919 at N=8; 0.888 at N=10; 0.892 at N=16. The ladder is flat after N=4 (coverage intervals overlap there); chunk latency keeps growing linearly in N, in the table below | E3 |
+| What does one chunk cost at batch 1? | 73.5 ms eager / 66.8 ms graph at N=4; 190.5 ms eager / 181.0 ms graph at N=10. CUDA graphs are worth 1.05x here, against 4.7x on the 11 M ablation model. `torch.compile` is NOT RUN (no MSVC on this host) | E9 |
+| Does injected observation latency hurt? | success 57% at 0 ms injected vs 43% at 200 ms injected (30 episodes per row, CIs overlapping). The binding constraint is the policy's own cost: 29 deadline misses per episode against a 100 ms period | E10 |
+| Does replanning four times faster break it? | Yes for naive replacement: 10% at 100 ms and 10% at 200 ms against 57% / 43% when replanning every 8 steps; uniform temporal ensembling over the same overlapping chunks recovers 53% / 43% at 4x the chunk count | E12 |
+
+Each row is expanded below with its table, figure, interval and the condition under which
+it would be false (`docs/04_eval_and_experiments.md` section 3).
+
+## Start here
 
 ```bash
-uv sync --python 3.12       # or: just setup
-just test                   # ruff, mypy strict, CPU unit tests (CI gate)
-just data                   # download + convert lerobot/pusht to Zarr (about 32 MB)
-just train-e1               # 3 policies, 12000 steps each, ~60 min per run; resumable
-just eval-e1                # parallel rollouts -> results/e1.jsonl
-just tables && just figures # regenerate every table/figure from JSONL
-just readme                 # regenerate README.md from the generated tables
+uv sync --python 3.12       # or: just setup      -> the locked environment
+just setup-pretrained       # optional backend for the borrowed policy (lerobot + diffusers)
+just test                   # ruff, mypy strict, CPU unit tests (what CI runs)
+just eval-e0                # the acceptance gate: does the harness reproduce the model card?
+just tables && just figures && just readme
 ```
 
+`just eval-e0` is the one to run first. It puts the pretrained checkpoint through our
+gym-pusht wrapper, our harness and our success definition (max coverage >= 95 %). If it
+lands near zero, the bug is ours -- the checkpoint ships its own normalization statistics
+and the current `lerobot` release drops them on load -- and everything downstream would be
+measuring our plumbing rather than the policy.
+
 Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/), [just](https://github.com/casey/just).
-The week-1 gates are in `scripts/gates/`; `just gates` runs G1-G9 and honestly reports
-NOT RUN where the host lacks the prerequisite.
+`just doctor` checks the environment before you spend GPU time.
 
-## Results (measured)
+## Results
 
-### E1: flow vs DDPM vs regression, PushT
+### E0: the pretrained checkpoint through our harness
 
-| Policy | Seeds | Episodes/seed | Success (95% CI) | Mean coverage |
+This is a validation, not a result we own. It is also the project's reproduction check: the
+model card reports 65.4 % success and 0.955 mean max overlap over 500 episodes.
+
+| Scheduler | N | Episodes | Success (95% CI) | Mean coverage (95% CI) | Mean chunk latency ms |
+|---|---|---|---|---|---|
+| ddim | 10 | 50 | 64.0% [52.0%, 78.0%] | 0.924 [0.878, 0.953] | 385.2 |
+| ddpm | 100 | 50 | 58.0% [44.0%, 72.0%] | 0.936 [0.916, 0.951] | 4456.8 |
+
+![E0 validation](results/figures/e0_validation.png)
+
+`ddim@10` is the operating point every later experiment uses; `ddpm@100` is the checkpoint's
+own scheduler and step count, i.e. the published setup. Two caveats: the intervals are over
+the 50 episodes, because PushT has exactly one pretrained checkpoint and there is no training
+seed to resample; and these two rows ran with two rollout workers sharing the GPU, so their
+latency column is roughly 2x the clean single-process numbers in E9.
+
+Reading it: the checkpoint's own 100-step DDPM sampling is over ten times slower per chunk
+than 10-step DDIM and no better here (compare the two rows), which is the first hint that this
+policy's cost profile is not where a small model's is.
+
+### E3: how far can the sampler be truncated?
+
+Same checkpoint, same 50 paired eval seeds per N, only the number of DDIM steps changes.
+DDIM rather than the checkpoint's DDPM because a DDPM step injects noise: truncating that
+scheduler would measure the scheduler, not the policy.
+
+| Scheduler | N (sampler steps) | Success (95% CI) | Mean coverage (95% CI) | Mean chunk latency ms |
 |---|---|---|---|---|
-| ddpm | 1 | 50 | 0.0% [0.0%, 0.0%] | 0.284 |
-| flow | 1 | 50 | 8.0% [2.0%, 16.0%] | 0.471 |
-| regression | 1 | 50 | 4.0% [0.0%, 10.0%] | 0.303 |
-
-![E1 success](results/figures/e1_success.png)
-
-### E3: sampler steps vs success and latency
-
-| Policy | N (sampler steps) | Success (95% CI) | Mean chunk latency ms |
-|---|---|---|---|
-| ddpm | 1 | 0.0% [0.0%, 0.0%] | 10.0 |
-| ddpm | 2 | 0.0% [0.0%, 0.0%] | 14.2 |
-| ddpm | 4 | 0.0% [0.0%, 0.0%] | 22.3 |
-| ddpm | 8 | 0.0% [0.0%, 0.0%] | 39.4 |
-| ddpm | 10 | 0.0% [0.0%, 0.0%] | 47.7 |
-| ddpm | 16 | 0.0% [0.0%, 0.0%] | 76.6 |
-| flow | 1 | 0.0% [0.0%, 0.0%] | 9.6 |
-| flow | 2 | 8.0% [2.0%, 16.0%] | 13.4 |
-| flow | 4 | 14.0% [4.0%, 24.0%] | 21.6 |
-| flow | 8 | 2.0% [0.0%, 6.0%] | 37.2 |
-| flow | 10 | 0.0% [0.0%, 0.0%] | 45.3 |
-| flow | 16 | 14.0% [6.0%, 24.0%] | 69.4 |
+| ddim | 1 | 0.0% [0.0%, 0.0%] | 0.121 [0.076, 0.165] | 31.5 |
+| ddim | 2 | 20.0% [10.0%, 32.0%] | 0.716 [0.627, 0.804] | 74.6 |
+| ddim | 4 | 42.0% [30.0%, 56.0%] | 0.885 [0.847, 0.919] | 165.0 |
+| ddim | 8 | 60.0% [46.0%, 74.0%] | 0.919 [0.892, 0.940] | 345.5 |
+| ddim | 10 | 54.0% [40.0%, 68.0%] | 0.888 [0.831, 0.936] | 438.2 |
+| ddim | 16 | 54.0% [40.0%, 66.0%] | 0.892 [0.847, 0.930] | 726.7 |
 
 ![E3 success](results/figures/e3_success_vs_steps.png)
 ![E3 latency](results/figures/e3_latency_vs_steps.png)
+
+Reading it: one step is catastrophic -- its coverage falls below what the from-scratch ablation
+models reach -- two is still poor, four reaches the plateau, and past four every interval
+overlaps. Chunk latency grows linearly in N, so the step count is the dial that decides whether
+a control period is reachable at all. Measured under two-worker contention; the clean
+single-process numbers are E9.
 
 ### E9: batch-1 latency ladder
 
 | Mode | N | Mean ms | p95 ms | Compile s |
 |---|---|---|---|---|
-| cudagraph | 1 | 2.29 | 2.30 | 0.0 |
-| eager | 1 | 5.36 | 5.93 | 0.0 |
-| cudagraph | 2 | 2.81 | 2.82 | 0.0 |
-| eager | 2 | 8.37 | 9.13 | 0.0 |
-| cudagraph | 4 | 3.86 | 3.87 | 0.0 |
-| eager | 4 | 14.84 | 15.59 | 0.0 |
-| cudagraph | 8 | 5.98 | 5.99 | 0.0 |
-| eager | 8 | 27.30 | 27.93 | 0.0 |
-| compile-default | 10 | 13.64 | 14.60 | 63.9 |
-| compile-max-autotune | 10 | 5.98 | 6.33 | 133.6 |
-| compile-reduce-overhead | 10 | 5.80 | 5.89 | 25.8 |
-| cudagraph | 10 | 7.09 | 7.24 | 0.0 |
-| eager | 10 | 33.46 | 34.48 | 0.0 |
-| cudagraph | 16 | 10.21 | 10.24 | 0.0 |
-| eager | 16 | 51.98 | 53.16 | 0.0 |
+| cudagraph | 1 | 17.51 | 19.19 | 0.0 |
+| eager | 1 | 20.22 | 20.86 | 0.0 |
+| cudagraph | 2 | 33.47 | 34.94 | 0.0 |
+| eager | 2 | 38.45 | 39.98 | 0.0 |
+| cudagraph | 4 | 66.84 | 69.05 | 0.0 |
+| eager | 4 | 73.49 | 76.20 | 0.0 |
+| cudagraph | 8 | 139.29 | 146.57 | 0.0 |
+| eager | 8 | 144.17 | 149.70 | 0.0 |
+| cudagraph | 10 | 181.00 | 185.13 | 0.0 |
+| eager | 10 | 190.52 | 204.28 | 0.0 |
+| cudagraph | 16 | 304.01 | 321.57 | 0.0 |
+| eager | 16 | 309.41 | 320.93 | 0.0 |
+
+Reading it: the CUDA-graph column is a few percent off eager here, where the same comparison
+on the 11 M ablation model was a multiple -- this policy is compute-bound rather than
+launch-bound, so launch-overhead work does not transfer. `torch.compile`, the mode with the
+largest gain on the small model, is NOT RUN: Inductor needs MSVC to codegen the CPU partition
+that the checkpoint's DDIM scheduler creates, and this host has no C++ build tools.
+`scripts/latency_ladder.sh` reports it as NOT RUN and writes no row; two candidate fixes are in
+`docs/05` section 1.
 
 ### E10: injected observation latency in the fixed-rate loop
 
 | Latency ms | Strategy | Success (95% CI) | Mean coverage | Deadline misses / episode |
 |---|---|---|---|---|
-| 0 | naive | 3.3% [0.0%, 8.3%] | 0.439 | 0.05 |
-| 50 | naive | 0.0% [0.0%, 0.0%] | 0.417 | 0.08 |
-| 100 | naive | 0.0% [0.0%, 0.0%] | 0.411 | 0.13 |
-| 100 | naive-r2 | 0.0% [0.0%, 0.0%] | 0.212 | 0.05 |
-| 100 | temporal-ensemble-r2 | 5.0% [0.0%, 11.7%] | 0.386 | 0.02 |
-| 150 | naive | 1.7% [0.0%, 6.7%] | 0.385 | 0.07 |
-| 200 | naive | 3.3% [0.0%, 8.3%] | 0.413 | 0.08 |
-| 200 | naive-r2 | 0.0% [0.0%, 0.0%] | 0.154 | 0.00 |
-| 200 | temporal-ensemble-r2 | 1.7% [0.0%, 5.0%] | 0.323 | 0.18 |
+| 0 | naive | 56.7% [40.0%, 73.3%] | 0.917 | 29.33 |
+| 50 | naive | 60.0% [43.3%, 76.7%] | 0.932 | 26.37 |
+| 100 | naive | 56.7% [40.0%, 73.3%] | 0.897 | 26.97 |
+| 100 | naive-r2 | 10.0% [0.0%, 20.1%] | 0.749 | 141.60 |
+| 100 | temporal-ensemble-r2 | 53.3% [36.7%, 70.0%] | 0.926 | 120.37 |
+| 150 | naive | 46.7% [30.0%, 63.3%] | 0.914 | 31.40 |
+| 200 | naive | 43.3% [26.7%, 60.0%] | 0.915 | 33.00 |
+| 200 | naive-r2 | 10.0% [0.0%, 23.3%] | 0.553 | 147.40 |
+| 200 | temporal-ensemble-r2 | 43.3% [26.7%, 60.0%] | 0.880 | 120.73 |
 
-`naive` replans when the action queue empties (every 8 control steps); the `-r2` rows
-replan every 2 steps so four chunks overlap, which is the only regime where temporal
-ensembling differs from naive replacement.
+`naive` replans when the 8-step action queue empties; the `-r2` rows replan every 2 steps so
+four chunks overlap, which is the only regime where temporal ensembling differs from naive
+replacement. The loop runs in virtual time; chunk inference is timed for real, and every
+chunk that exceeds the 100 ms period is logged as a deadline miss.
 
 ![E10 success](results/figures/e10_success_vs_latency.png)
 ![E10 latency histogram](results/figures/e10_latency_hist.png)
 
-### M2: measured memory and throughput
+Reading it: injected latency costs success and the naive intervals overlap at 30 episodes per
+row, so read it as a trend; coverage barely moves, so the policy still reaches the goal and
+just converts the last few percent less often. The loud column is the deadline-miss count: at
+N=10 one chunk needs about twice the control period, so the loop misses on most chunks. The
+bottleneck is the policy's own compute, not the network, which is what E9 and E3 say from two
+other directions.
+
+The `-r2` rows are the replay-rate experiment: replanning every 2 steps overlaps four chunks,
+and at that rate naive replacement collapses -- its intervals do not come near the naive rows
+at the same injected latency -- while uniform temporal ensembling over the same chunks recovers
+to roughly the naive level, at four times the chunk count and a much heavier deadline-miss
+penalty. Replanning fast is not free: without ensembling it is actively harmful.
+
+## Ablation: what we tried first
+
+Before the pivot this repository trained three policies from scratch on PushT -- a
+conditional flow-matching 1-D U-Net, an epsilon-prediction DDPM, and an ACT-style regression
+chunk head -- for 12000 steps each at batch 64. They reach 4-7 % success, which is a floor
+effect: 6-11 successes in 150 episodes cannot order two policies, and a deployment
+experiment cannot detect a policy degrading from there. Those rows are kept because that
+negative result is the reason this stack now runs a borrowed policy. Raw rows:
+`results/ablation/`.
+
+| Policy | Seeds | Episodes/seed | Success per seed | Success (95% CI) | Mean coverage |
+|---|---|---|---|---|---|
+| ddpm | 3 | 50 | 2/50, 2/50, 3/50 | 4.7% [1.3%, 8.7%] | 0.468 |
+| flow | 3 | 50 | 3/50, 4/50, 4/50 | 7.3% [3.3%, 12.0%] | 0.519 |
+| regression | 3 | 50 | 2/50, 2/50, 2/50 | 4.0% [1.3%, 7.3%] | 0.336 |
+
+![Ablation success](results/figures/e1_ablation_success.png)
+
+Training cost, overfit sanity checks and the Triton kernel that this repo wrote for its own
+Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 
 | Model + data | Batch | Peak VRAM MiB | Steps/s | Fits |
 |---|---|---|---|---|
@@ -111,79 +183,97 @@ ensembling differs from naive replacement.
 | flow 96px | 64 | 4414 | 4.00 | yes |
 | flow 96px | 128 | 8616 | 0.05 | no |
 
-### M3: overfit sanity check (8 episodes)
-
 | Policy | Steps | Initial loss | Final loss | Ratio | Overfit 8 episodes |
 |---|---|---|---|---|---|
 | ddpm | 1200 | 1.0965 | 0.0907 | 0.083 | yes |
 | flow | 1200 | 1.2298 | 0.0652 | 0.053 | yes |
 | regression | 2000 | 0.3758 | 0.0290 | 0.077 | yes |
 
-### E9 stretch: fused Triton Euler/de-normalization kernel
-
 | Batch | Equivalent (max abs diff) | Eager ms | Compile ms | Triton ms | vs eager | vs compile |
 |---|---|---|---|---|---|---|
 | 1 | yes (9.2e-05) | 0.0131 | 0.0049 | 0.0060 | 2.19x | 0.83x |
 | 64 | yes (1.2e-04) | 0.0159 | 0.0050 | 0.0065 | 2.44x | 0.76x |
 
-## Honest limitations
+## Run anything
 
-- **Simulation only**, 96x96 PushT, small models (about 11 M parameters), 12000 training
-  steps per run (about 7.6 epochs). The reference DDPM recipe trains for ~200k steps; E0 is
-  therefore not a reproduction and is reported as a written explanation in `docs/04`.
-- **One training seed per policy at the 12000-step budget**, not the pre-registered three.
-  The bootstrap intervals in the tables are over the 50 evaluated episodes, so they are
-  episode-level and do not include seed-to-seed variance. A 3-seed sweep at this budget is
-  about 6 GPU-h and was out of reach for this iteration; the 3-seed 1800-step runs are kept
-  as the budget-ablation evidence in `logs/archive/`.
-- **Success rates stay low** (flow 8%, regression 4%, DDPM 0% in E1), far below the
-  published Diffusion Policy numbers. The E1 comparison is therefore about relative
-  coverage and latency, not a reproduction, and E3 treats success ordering between N values
-  as noise-limited.
-- Robomimic, ROS 2, Docker and `nvcc` were unavailable on this host. The documented
-  fallbacks were used: PushT only (D1), plain Python loop (D7), no CUDA C++ stretch (D6).
-  G8 and G9 are NOT RUN, never reported as passes.
-- E10 injects latency as observation staleness in control ticks and runs the loop in
-  virtual time; inference time is measured for real. Deadline misses are logged.
-- No W&B; JSONL only (D8 deviation).
+| Recipe | What it does | Cost |
+|---|---|---|
+| `just setup` | locked env from `uv.lock` | minutes |
+| `just setup-pretrained` | adds the optional backend (lerobot 0.6.1 + diffusers) outside the lock | ~1 min, ~2 GB |
+| `just doctor` | environment check: versions, CUDA, backend, checkpoint availability | seconds |
+| `just test` | ruff + mypy strict + CPU unit tests (what CI runs) | ~10 s |
+| `just eval-e0` | the acceptance gate: 100 episodes, two samplers | ~50 min |
+| `just eval-e3` | DDIM step sweep, 300 episodes | ~25 min |
+| `just latency-ladder` | batch-1 latency ladder, 12 rows | ~15 min |
+| `just eval-e10` | latency injection + async chunking, 270 episodes | ~75 min |
+| `just report` | one-screen summary of everything measured so far | seconds |
+| `just serve` | serve the policy over local HTTP (`docs/05` section 4) | seconds to start |
+| `just tables` / `just figures` / `just readme` | regenerate outputs from `results/*.jsonl` | seconds |
+| `just train-e1` / `just eval-e1` | ablation only: retrain and re-measure the from-scratch policies | ~3 GPU-h |
+| `just gates` | week-1 host gates G1-G9, reporting NOT RUN where the host lacks the prerequisite | minutes |
 
-## Reproduce
+Costs are wall-clock on this laptop GPU with two workers; the eval recipes are resumable at
+row granularity (each invocation prunes and rewrites only its own rows). `just --list` shows
+the rest: `lint`, `types`, `format`, `hooks`, `test-local`, `data`, `memory`, `kernel`,
+`overfit`.
 
-```bash
-just setup && just test
-just gates                    # G1-G5 should pass on this GPU class; G6/G8/G9 report NOT RUN
-just data
-just train-e1
-just eval-e1 && just eval-e3 && just latency-ladder && just eval-e10
-just memory && just kernel && just overfit
-just tables && just figures && just readme
+## What to read, in what order
+
+1. `docs/04_eval_and_experiments.md` -- protocol, experiment matrix, claims with their
+   "false if" conditions, and the dated deviations log (the honest part).
+2. `docs/05_inference_and_deployment.md` -- the latency ladder, the control loop, async
+   chunking, and why compile is NOT RUN.
+3. `docs/02_environment_setup.md` -- versions and the two-environment story for the backend
+   (section 3.4).
+4. `docs/01_architecture.md` -- the policy interface, and why the substrate swap touched
+   almost nothing.
+5. `docs/06_decisions_and_risks.md`, `docs/STATE.md` -- decisions D1-D11 and the live state.
+6. `docs/MODEL_CARD.md` -- what the borrowed policy is, what the stack provides, and the
+   metrics with intervals that a user of either needs.
+
+## Project layout
+
 ```
-
-Raw per-episode rows are in `results/*.jsonl`; checkpoints are local (ignored by git).
-Training logs are in `results/train/`.
-
-## Layout
-
-```
-conf/                  Hydra configs + experiment files
-src/flowpolicy/        data, models, training, eval, deploy, kernels
-scripts/gates/         G1-G9 gate scripts
-scripts/               data prep, train, evaluate, latency, deploy, tables, figures
+conf/                  Hydra configs + experiment files (ablation training)
+src/flowpolicy/
+  models/pretrained.py adapter: HF checkpoint behind the Policy interface
+  models/policies.py   PolicyLike protocol + the from-scratch policies
+  eval/                parallel rollout harness, bootstrap CIs, latency protocol
+  eval/report.py       the computed headline summary shared by `just report` and the README
+  deploy/control_loop.py fixed-rate loop, latency injection, temporal ensembling
+  deploy/server.py     local HTTP serving boundary (stdlib only)
+scripts/               eval runners (E0/E3/E9/E10), tables, figures, doctor, report, serve, gates
 tests/                 unit (CI), gpu/integration (local)
-docs/                  the full spec (00-07), STATE and CHANGELOG
-results/               raw JSONL, generated tables and figures
+docs/                  the spec (00-07), STATE, CHANGELOG, MODEL_CARD
+results/               raw JSONL, generated tables and figures, ablation/
 ```
 
-## Docs
+## Limitations
 
-- `docs/07_roadmap.md` - milestones and packaging checklist
-- `docs/02_environment_setup.md` - versions, setup, gates G1-G9 and results
-- `docs/01_architecture.md` - the `Policy` interface and module boundaries
-- `docs/04_eval_and_experiments.md` - pre-registered protocol, experiments and deviations
-- `docs/06_decisions_and_risks.md` - D1-D10 decisions and risks
-- `docs/STATE.md` - current state and decision log
+- **The policy is not ours.** `lerobot/diffusion_pusht` was trained by the LeRobot team
+  (175k steps, Apache-2.0). Nothing here is a result about Diffusion Policy itself.
+- **One checkpoint, so episode-level intervals.** E0, E3, E9 and E10 cannot report
+  seed-to-seed variance, and two 50-episode samples of the same configuration (E0's eval seeds
+  against E3's N=10 row) differ by about ten percentage points. That is the resolution limit of
+  every table here, and it is why they print intervals rather than single numbers.
+- **The backend is installed outside the lockfile.** lerobot 0.6.1 requires `torch < 2.12`;
+  this project pins `torch 2.14.1+cu130`. `just setup-pretrained` installs it `--no-deps` on
+  top of the sync and `just setup` prunes it. Verified working, not supported.
+- **The checkpoint's normalization is applied by our code**, because current lerobot moved
+  normalization into a processor pipeline this 2024 checkpoint does not ship. E0 is the gate
+  that says the mapping is right.
+- **Simulation only, virtual-time loop.** E10 injects latency as observation staleness in
+  control ticks and does not wall-clock pace the loop; inference is timed for real and
+  deadline misses are logged, but this is not a real-time scheduler.
+- Robomimic, ROS 2, Docker and `nvcc` are unavailable on this host, so the documented
+  fallbacks are in force (PushT only, plain-Python loop, no CUDA C++ stretch). G8 and G9 are
+  NOT RUN and never reported as passes. E2, E4-E8 and E11 were not run. No W&B; JSONL only.
+- No demo video: there is no capture path on this host.
+
+The full deviation log, including everything cut and why, is `docs/04` section 4.
 
 ## License
 
-Code: not decided by the owner yet. Dataset: `lerobot/pusht` is MIT (dataset card,
-accessed 2026-10-19); it derives from the Diffusion Policy PushT demos.
+Code: not decided by the owner yet. The pretrained checkpoint `lerobot/diffusion_pusht` is
+Apache-2.0 (model card, accessed 2026-10-27). Dataset `lerobot/pusht` is MIT and derives from
+the Diffusion Policy PushT demonstrations.

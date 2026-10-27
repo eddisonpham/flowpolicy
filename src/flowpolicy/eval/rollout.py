@@ -22,14 +22,38 @@ from flowpolicy.config import ModelConfig
 from flowpolicy.data.normalizer import Stats
 from flowpolicy.envs.pusht import MAX_STEPS, PushTEnv
 from flowpolicy.eval.metrics import assert_seed_disjoint
-from flowpolicy.models.policies import BasePolicy, build_policy
+from flowpolicy.models.policies import PolicyLike, build_policy
+from flowpolicy.models.pretrained import PretrainedDiffusionPolicy
 
 __all__ = ["assert_seed_disjoint", "evaluate", "load_policy", "rollout_episode"]
 
 
 def load_policy(
-    checkpoint: str | Path, device: str = "cuda", use_ema: bool = True
-) -> tuple[BasePolicy, dict[str, Any]]:
+    checkpoint: str | Path,
+    device: str = "cuda",
+    use_ema: bool = True,
+    *,
+    scheduler: str = "ddim",
+) -> tuple[PolicyLike, dict[str, Any]]:
+    """Load a trained checkpoint (`path/last.pt`) or an HF one (`hf:<repo_id>`).
+
+    Pretrained rows carry `train_seed = -1`: there is no training seed to resample, so
+    their intervals are episode-level (docs/04 section 1).
+    """
+    if str(checkpoint).startswith("hf:"):
+        hf_id = str(checkpoint).removeprefix("hf:")
+        pretrained = PretrainedDiffusionPolicy(hf_id, device=device, scheduler=scheduler)
+        pretrained.eval()
+        return pretrained, {
+            "policy": "pretrained-dp",
+            "source": hf_id,
+            "train_seed": -1,
+            "checkpoint": f"hf:{hf_id}",
+            "step": pretrained.pretrained_step,
+            "params": pretrained.num_parameters(),
+            "weights": "pretrained",
+            "scheduler": scheduler,
+        }
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
     cfg = payload["config"]
     stats = Stats(**payload["stats"])
@@ -53,6 +77,7 @@ def load_policy(
         "checkpoint": str(checkpoint),
         "step": int(payload["step"]),
         "params": policy.num_parameters(),
+        "weights": "ema",
     }
     return policy, meta
 
@@ -70,7 +95,7 @@ def _obs_batch(
 
 
 def rollout_episode(
-    policy: BasePolicy,
+    policy: PolicyLike,
     env_seed: int,
     *,
     sampler_steps: int = 10,
@@ -134,9 +159,11 @@ def rollout_episode(
 _WORKER: dict[str, Any] = {}
 
 
-def _init_worker(checkpoint: str, device: str, sampler_steps: int, action_horizon: int) -> None:
+def _init_worker(
+    checkpoint: str, device: str, sampler_steps: int, action_horizon: int, scheduler: str
+) -> None:
     torch.set_num_threads(1)
-    policy, meta = load_policy(checkpoint, device=device)
+    policy, meta = load_policy(checkpoint, device=device, scheduler=scheduler)
     _WORKER.update(
         policy=policy, meta=meta, device=device, steps=sampler_steps, horizon=action_horizon
     )
@@ -168,6 +195,7 @@ def evaluate(
     workers: int = 4,
     device: str = "cuda",
     use_ema: bool = True,
+    scheduler: str = "ddim",
 ) -> list[dict[str, Any]]:
     assert_seed_disjoint(train_seeds, eval_seeds)
     checkpoint = str(checkpoint)
@@ -180,7 +208,7 @@ def evaluate(
         max_workers=workers,
         mp_context=ctx,
         initializer=_init_worker,
-        initargs=(checkpoint, device, sampler_steps, action_horizon),
+        initargs=(checkpoint, device, sampler_steps, action_horizon, scheduler),
     ) as pool:
         for part in pool.map(_run_episodes, [c for c in chunks if c]):
             results.extend(part)
@@ -189,7 +217,7 @@ def evaluate(
         row["task"] = "pusht"
         row["sampler_steps"] = sampler_steps
         row["action_horizon"] = action_horizon
-        row["weights"] = "ema"
+        row["weights"] = str(row.get("weights", "ema"))
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("a", encoding="utf-8") as fh:

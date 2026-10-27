@@ -105,7 +105,10 @@ class Trainer:
 
     def _batch(self, size: int) -> dict[str, torch.Tensor]:
         idx = torch.randint(0, len(self.train_data), (size,), generator=self._rng).numpy()
-        batch = self.train_data.get_batch(idx)
+        # Crop offsets come from the checkpointed generator, so a resumed run sees
+        # the same augmentation sequence as an uninterrupted one.
+        crop = self.cfg.data.augment_crop or None
+        batch = self.train_data.get_batch(idx, crop_size=crop, generator=self._rng)
         return {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
 
     def _val_loss(self) -> float:

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from flowpolicy.data.window import WindowDataset, ZarrArrays, split_episodes
+from flowpolicy.data.window import WindowDataset, ZarrArrays, random_crop, split_episodes
 
 pytestmark = pytest.mark.unit
 
@@ -51,6 +51,43 @@ def test_batch_shapes_and_normalization_range():
     assert batch["action"].shape == (3, 4, 2)
     assert torch.all(batch["image"] >= 0) and torch.all(batch["image"] <= 1)
     assert torch.equal(batch["action"][0, 0], torch.tensor([0.0, 0.0]))
+
+
+def test_random_crop_is_per_sample_seeded_and_a_real_slice():
+    images = torch.arange(2 * 2 * 1 * 4 * 4, dtype=torch.float32).reshape(2, 2, 1, 4, 4)
+    a = random_crop(images, 2, torch.Generator().manual_seed(3))
+    b = random_crop(images, 2, torch.Generator().manual_seed(3))
+    assert a.shape == (2, 2, 1, 2, 2)
+    assert torch.equal(a, b)  # the checkpointed generator makes crops reproducible
+    for i in range(2):
+        assert any(
+            torch.equal(a[i, 0, 0], images[i, 0, 0, y : y + 2, x : x + 2])
+            for y in range(3)
+            for x in range(3)
+        )
+    # both frames of a sample share the offset, so a window stays consistent
+    assert any(
+        torch.equal(a[0, 1, 0], images[0, 1, 0, y : y + 2, x : x + 2])
+        for y in range(3)
+        for x in range(3)
+    )
+
+
+def test_random_crop_disabled_and_rejects_oversize():
+    images = torch.zeros(1, 2, 1, 4, 4)
+    assert random_crop(images, 4) is images
+    with pytest.raises(ValueError):
+        random_crop(images, 5)
+
+
+def test_get_batch_applies_crop_only_when_asked():
+    ds = WindowDataset(tiny_arrays(), np.array([0, 1]), obs_horizon=2, pred_horizon=4)
+    assert ds.get_batch(np.array([0, 5]))["image"].shape == (2, 2, 3, 2, 2)
+    cropped = ds.get_batch(
+        np.array([0, 5]), crop_size=1, generator=torch.Generator().manual_seed(0)
+    )
+    assert cropped["image"].shape == (2, 2, 3, 1, 1)
+    assert cropped["state"].shape == (2, 2, 2)
 
 
 def test_action_horizon_bigger_than_pred_horizon_is_rejected():

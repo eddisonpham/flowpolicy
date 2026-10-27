@@ -9,10 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 
 PLACEHOLDERS = {
-    "{{E1_TABLE}}": "results/tables/e1_main.md",
+    "{{HEADLINE_TABLE}}": "results/tables/headline.md",
+    "{{E0_TABLE}}": "results/tables/e0_validation.md",
     "{{E3_TABLE}}": "results/tables/e3_steps.md",
     "{{E9_TABLE}}": "results/tables/e9_latency.md",
     "{{E10_TABLE}}": "results/tables/e10_deploy.md",
+    "{{E1_ABLATION_TABLE}}": "results/tables/e1_ablation.md",
     "{{M2_TABLE}}": "results/tables/m2_memory.md",
     "{{OVERFIT_TABLE}}": "results/tables/overfit.md",
     "{{KERNEL_TABLE}}": "results/tables/kernel.md",

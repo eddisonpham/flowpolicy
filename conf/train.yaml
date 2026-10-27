@@ -42,6 +42,7 @@ data:
   pred_horizon: 16
   action_horizon: 8
   image_size: 96
+  augment_crop: 0
   state_dim: 2
   action_dim: 2
   val_fraction: 0.1

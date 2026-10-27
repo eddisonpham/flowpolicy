@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import torch
 from torch import Tensor, nn
@@ -18,6 +18,27 @@ from flowpolicy.config import ModelConfig
 from flowpolicy.data.normalizer import Normalizer, Stats
 from flowpolicy.models.encoders import MultiFrameEncoder
 from flowpolicy.models.heads import ConditionalUnet1D, TransformerChunkHead
+
+
+class PolicyLike(Protocol):
+    """What eval, deployment and the latency ladder actually need from a policy.
+
+    `BasePolicy` provides it for trained checkpoints. `PretrainedDiffusionPolicy`
+    (models/pretrained.py) provides it for the HF checkpoint, which does its own
+    normalization and must not go through the train-time `Normalizer`.
+    """
+
+    obs_horizon: int
+    pred_horizon: int
+    action_dim: int
+
+    def predict_chunk(self, obs: dict[str, Tensor], **sampler_kw: Any) -> Tensor: ...
+
+    def num_parameters(self) -> int: ...
+
+    def eval(self) -> Any: ...
+
+    def to(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class BasePolicy(nn.Module, ABC):
@@ -194,7 +215,10 @@ class DDPMPolicy(BasePolicy):
             if noise is None
             else noise.clone()
         )
-        values = torch.linspace(self.train_steps - 1, 0, steps).round().long().tolist()
+        # End the ladder at t=1, never t=0: alphas_cumprod[0] == 1.0 exactly, so a
+        # t=0 step maps x to x unchanged and silently wastes one of the `steps`.
+        # With t=0 in the ladder, steps=1 and steps=2 produced identical samples.
+        values = torch.linspace(self.train_steps - 1, 1, steps).round().long().tolist()
         timesteps = sorted(set(values), reverse=True)
         for i, t in enumerate(timesteps):
             ab_t = self.alphas_cumprod[t]
@@ -251,10 +275,16 @@ class RegressionPolicy(BasePolicy):
 
 
 def _squared_cosine_schedule(steps: int, s: float = 0.008) -> Tensor:
-    t = torch.linspace(0, steps, steps + 1, dtype=torch.float64)
+    """Cumulative alphas `alphas_cumprod[t] = prod_{k<=t} alpha_k` for t = 0..steps-1.
+
+    Must be the cumulative product: `loss` uses sqrt(ab) * x0 + sqrt(1 - ab) * eps,
+    so a per-step ratio (which stays ~0.9999) would feed almost-clean targets and
+    the DDIM update would divide by a meaningless sqrt(ab). Pinned by
+    `tests/unit/test_policies.py::test_ddpm_schedule_matches_closed_form`.
+    """
+    t = torch.linspace(0, steps - 1, steps, dtype=torch.float64)
     acp = torch.cos(((t / steps + s) / (1.0 + s)) * math.pi / 2) ** 2
-    acp = acp / acp[0]
-    return (acp[1:] / acp[:-1]).float()
+    return (acp / acp[0]).float()
 
 
 def build_policy(

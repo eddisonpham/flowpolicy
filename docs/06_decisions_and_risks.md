@@ -16,6 +16,7 @@ Owner decides; each row has a recommended default. Mark the chosen option and da
 | D8 | Tracking | W&B only; W&B + JSONL | both | Offline reproducibility, results regenerate from JSONL | none | CHOSEN 2026-10-19: JSONL only; W&B omitted (dated deviation) |
 | D9 | PushT env | gym-pusht; DP repo env | gym-pusht (pip, maintained package) after an equivalence check | LeRobot port reports about 63.8% vs 64.2% with original code on gym-pusht [S] | Check shows a mismatch: use DP env code as reference (reading only, per brief rule 5) | CHOSEN 2026-10-19: gym-pusht 0.1.8; original-env equivalence still [U] (R5) |
 | D10 | Python and CUDA | 3.12 + cu130 | as recommended | [02](02_environment_setup.md) section 3 | gate failures | CHOSEN 2026-10-19: Python 3.12 + cu130, verified by G1 |
+| D11 | Policy substrate | train from scratch; use a pretrained checkpoint; both | Pretrained checkpoint for the measured stack, from-scratch kept as ablation | 12000-step from-scratch runs reach 4-7 % success (6-11 successes in 150 episodes), so policy comparisons cannot be ordered and deployment degradations cannot be seen; `lerobot/diffusion_pusht` reports 65.4 % on the same env and metric and validates the harness against an external number | Training budget above ~400k steps becomes affordable, or a project-specific policy is needed | CHOSEN 2026-10-27 by the owner: pretrained checkpoint; from-scratch archived as an ablation |
 
 ## 2. Risk register
 
@@ -33,8 +34,18 @@ Owner decides; each row has a recommended default. Mark the chosen option and da
 | R10 | Resume-equivalence not bitwise | M | L | state wording rule in 03 | say "tolerance-based" |
 | R11 | Overrun of any phase by more than a few days | M | H | roadmap fallbacks | invoke fallback, log in CHANGELOG |
 | R12 | Week 8 squeezed | M | H | week 8 protected; start README skeleton at M4 | never cut packaging |
+| R13 | The optional backend (lerobot 0.6.1) pins torch < 2.12, but the project pins 2.14.1 | H | M | install `--no-deps` on top of the sync behind `just setup-pretrained`; document it in [02](02_environment_setup.md) section 3.4; assert the torch version after install | the combination stops importing: pin an older lerobot or run the policy in its own env |
+| R14 | Checkpoint normalization silently mismatched (lerobot 0.6.1 drops the 2024 normalization buffers) | H | H | read the buffers from `model.safetensors` and apply the checkpoint's own mapping; E0 against the published 65.4 % as the gate | E0 lands far from 65 %: the mapping is wrong, fix before any other experiment |
 
 L = likelihood, I = impact (H/M/L). Estimates are judgments, not measurements.
+
+Outcomes as of 2026-10-27: R13 and R14 triggered by the D11 pivot and both handled -- the
+backend is installed outside the lockfile and the checkpoint's statistics are applied by
+`models/pretrained.py`, with E0 (64.0 % success, 0.924 coverage at ddim@10 against the model
+card's 65.4 % / 0.955) as the check that the mapping is right. R6 is now resolved in the
+opposite direction: the ~64 % PushT figure *is* reproduced, by the pretrained checkpoint, and
+the from-scratch route is written off as a scaled-budget ablation rather than a failed
+reproduction.
 
 Outcomes as of 2026-10-19: R2 cleared (G5 passes with `triton-windows`). R3 triggered and accepted (no `nvcc`, D6 closed). R4 triggered and accepted (robosim not installed, G8 NOT RUN, D1 = PushT only). R5 remains open (no original-env equivalence check; reported as a finding, not a pass). R6 triggered: the 1800-step DDPM baseline reaches 0% success, so no reproduction is claimed and the fallback "write up why; proceed with relative comparisons" was used. R8 triggered: the budget is 1800 steps; 3 seeds were kept for E1 and every result is labelled scaled-down. R9 triggered: Docker absent, plain Python loop (D7). R10 handled: tests and docs say tolerance-based (`rtol=1e-5`), never bit-exact.
 

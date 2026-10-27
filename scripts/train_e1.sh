@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Train E1: 3 policies x SEEDS (default 1). A finished run (last.pt) is skipped;
-# an interrupted run resumes from its newest step_*.pt. Safe to re-run.
+# Train E1: 3 policies x SEEDS (default 0 1 2, ~3 GPU-h total). A finished run
+# (last.pt) is skipped; an interrupted run resumes from its newest step_*.pt.
+# Safe to re-run. SEEDS=0 trains the single seed used by the earlier tables.
 set -euo pipefail
 STEPS="${STEPS:-12000}"
-SEEDS="${SEEDS:-0}"
+SEEDS="${SEEDS:-0 1 2}"
 mkdir -p logs
 for s in $SEEDS; do
   for k in flow ddpm regression; do

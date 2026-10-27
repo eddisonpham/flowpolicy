@@ -1,4 +1,6 @@
-# Docs changelog
+# CHANGELOG
+
+Paths in entries below refer to where files lived on the date of the entry. The 2026-10-27 entry lists every move (from-scratch measurements now under `results/ablation/`).
 
 ## 2026-10-18: Stage 1
 
@@ -93,3 +95,85 @@
 - E10 (420 episodes, naive replan): coverage 0.439 at 0 ms and 0.385-0.417 at 50-200 ms, success 0-3.3% with overlapping CIs. Deadline misses 3-8 per ~2280 chunk inferences (individual slow chunks; mean inference 45-53 ms against a 100 ms period), down from the "zero misses" claim that only held at the 1800-step checkpoints.
 - E12 bug found and fixed: temporal ensembling replanned only when the action queue emptied, so each step was covered by exactly one chunk and the ensemble was a copy of naive (coverage 0.411 at 100 ms, 0.413 at 200 ms, identical success). Added `replan_every`; naive and temporal-ensemble were re-run at a 2-step replan rate with four overlapping chunks. Naive replacement collapses (coverage 0.212 / 0.154, 0/120 successes); temporal ensembling recovers most of it (0.386 / 0.323, 4/120) but stays below the 8-step naive baseline (0.411 / 0.413) and costs 4x chunk inference.
 - Tables, figures, README and docs/04 §3 claims regenerated from the new JSONL; docs/04 §4 records the new deviations (single training seed, replan-rate change, ~19% zero-coverage episodes). `just test` green.
+
+## 2026-10-24: three training seeds, DDPM ladder bug fixed (agent)
+
+- E1 now runs the pre-registered three training seeds at the 12000-step budget (seeds 1 and 2 trained at 3.2 steps/s, 62-64 min each), 50 paired episodes per checkpoint, 450 episodes total. Success: flow 7.3% [3.3%, 12.0%] (11/150), DDPM 4.7% [1.3%, 8.7%] (7/150), regression 4.0% [1.3%, 7.3%] (6/150); coverage 0.519 / 0.468 / 0.336. All three success CIs overlap, so the earlier "flow is the only policy with non-zero success" claim is retracted: the policies are ordered by point estimate and by coverage (regression clearly below both generative policies), not separated on success.
+- `DDPMPolicy._sample` bug: the ladder ran from t=99 down to t=0, but `alphas_cumprod[0] == 1.0` exactly, so the last step was a no-op and every N behaved as N-1 steps; N=1 and N=2 produced bit-identical samples (coverage 0.2294 both). The ladder now ends at t=1. Guarded by `test_ddpm_step_count_is_effective`, which fails on the old code. DDPM E1 and E3 rows were re-evaluated (sampling-only change, no retraining).
+- E3 re-run for DDPM: 0.229 [0.177, 0.284] at N=1, 0.213 [0.168, 0.264] at N=2, 0.467 [0.395, 0.536] at N=4, 0.550 [0.463, 0.632] at N=10 - DDIM needs at least 4 steps. Flow's ladder (0.401-0.543) has overlapping intervals at every N, so E3 cannot order N for flow; the table now prints coverage intervals so the reader can see that.
+- `scripts/make_tables.py` prints a 95% bootstrap interval for E3 coverage; README, tables, figures and docs/04 §3/§4 regenerated from the new JSONL.
+
+## 2026-10-27: pivot to a pretrained policy, then measure what a good policy actually costs (agent)
+
+- **The owner asked for a 180: stop training, use a checkpoint that is already good, make the
+  infrastructure the deliverable (D11).** The trigger is the ablation: three policies at 12000
+  steps reach 4-7 % success, and at that level a comparison cannot order two policies and a
+  latency experiment cannot see a policy degrade. The substrate is now
+  `lerobot/diffusion_pusht` (Apache-2.0, 262.7 M parameters, fp32, trained on gym-pusht for
+  175k steps; the model card reports 65.4 % success and 0.955 mean max overlap over 500
+  episodes). Nothing is trained here any more.
+- `src/flowpolicy/models/pretrained.py` is new: a `PolicyLike` adapter that puts the HF
+  checkpoint behind the repo's interface. `models/policies.py` gained the structural
+  `PolicyLike` protocol; `eval/rollout.py`, `eval/latency.py` and `deploy/control_loop.py`
+  were re-typed to it. The episode loop, the latency protocol, the control loop, the tables
+  and the figures were **not** changed -- one load branch in `load_policy` was enough, which is
+  the architecture claim in docs/01 holding up.
+- **Normalization is the only interesting part of the adapter.** lerobot 0.6.1 no longer
+  creates the `normalize_inputs` / `unnormalize_outputs` modules the 2024 checkpoint was saved
+  with, so `from_pretrained` logs those eight tensors as unexpected keys and drops them.
+  The adapter reads them from `model.safetensors` (ImageNet mean/std for images, dataset
+  min/max for state and actions) and applies them itself. A unit test covers the three
+  transforms (`tests/unit/test_pretrained_normalization.py`, 4 tests, 33 total); CI stays
+  backend-free because lerobot is imported lazily.
+- **E0 is the acceptance gate and it passes.** The checkpoint through our gym-pusht wrapper,
+  our harness and our metric: 64.0 % success (32/50) and 0.924 mean coverage at DDIM N=10,
+  against the published 65.4 % / 0.955 for the checkpoint's own DDPM@100 setup. That also
+  closes the reproduction item that the from-scratch route never reached (docs/00 section 3).
+- **Dependencies:** lerobot 0.6.1 requires `torch < 2.12` while this project pins
+  `torch 2.14.1+cu130`, so `just setup-pretrained` installs it `--no-deps` with the packages
+  its inference path imports. Documented as a deviation (docs/04 section 4) and as R13 in
+  docs/06, because it is verified working, not supported.
+- **What moved:** from-scratch measurements now live in `results/ablation/` (e1, e3, deploy,
+  latency, kernel, memory) and are presented as the ablation that motivated the pivot;
+  pretrained rows are written to `results/{e0,e3,latency,deploy}.jsonl` with
+  `train_seed = -1` and `weights = pretrained`, so no table can quietly mix them with a
+  training-seed comparison. `E13` (36000 steps plus random-crop augmentation) was scaffolded
+  before the pivot, never run, and has been removed rather than left half-finished.
+- **Measured, pretrained checkpoint (2026-10-27).** E3 (300 episodes, DDIM): coverage 0.121
+  [0.076, 0.165] at N=1, 0.716 at N=2, 0.885 at N=4, flat from there (0.888-0.919, intervals
+  overlapping) -- one step is catastrophic, four reaches the plateau. E9 (batch 1): eager
+  20.2 / 73.5 / 190.5 / 309.4 ms and CUDA graph 17.5 / 66.8 / 181.0 / 304.0 ms at N=1/4/10/16,
+  i.e. graphs are worth 1.02-1.16x here against 4.7x on the 11 M ablation model; `torch.compile`
+  is NOT RUN (Inductor needs MSVC for the CPU partition the checkpoint's DDIM scheduler creates,
+  `InvalidCxxCompiler: cl is not found`), reported as NOT RUN by `scripts/latency_ladder.sh`
+  rather than as a row. E10 (270 episodes): success 56.7 / 60.0 / 56.7 / 46.7 / 43.3 % at 0/50/
+  100/150/200 ms injected latency with overlapping intervals and flat coverage (0.897-0.932), but
+  26-33 deadline misses per episode because inference needs ~2x the control period. E12: naive
+  replacement at a 2-step replan rate collapses to 10.0 % (coverage 0.749 / 0.553, disjoint from
+  the baseline) while temporal ensembling recovers 53.3 % / 43.3 % (0.926 / 0.880). Together E3 +
+  E9 fix the deployable envelope: only N <= 4 fits a 100 ms period, exactly where coverage has
+  plateaued.
+- **Infrastructure added the same day, none of it training.** `flowpolicy.eval.report` computes
+  the headline summary that `just report` prints and that the README injects (so the five
+  headline answers are generated, not typed); `flowpolicy.deploy.server` is a stdlib-only HTTP
+  serving boundary with a documented JSON contract (docs/05 section 4) and six socket-level
+  contract tests; `scripts/doctor.py` reports environment PASS/FAIL/NOT RUN in seconds;
+  `docs/MODEL_CARD.md` covers the borrowed policy and this stack; CI gained a job that
+  regenerates the tables and fails if the checked-in ones are stale. `kernel_bench.py` and
+  `bench_memory.py` were repointed at `results/ablation/` after the move. Unit tests: 45.
+- Docs re-framed around the pivot: 00 (status, goals, success criteria), 01 (interface and
+  adapter, acceptance ticked), 02 (new section 3.4 on the optional backend), 03 (marked as the
+  ablation path), 04 (matrix, deviations, priority order), 06 (D11, R13, R14), 07 (rule 4
+  amended: borrowed policy code is now allowed, the harness/loop/tables stay ours).
+- **E12 became the fifth headline answer, and the README prose stopped restating numbers.**
+  `flowpolicy.eval.report` gained a row for the `-r2` rows (naive replacement 10 % at 100 ms
+  and 200 ms against 57 % / 43 % for the 8-step baseline, temporal ensembling recovering
+  53 % / 43 %), so the deployment finding is in `just report` and in the README's generated
+  headline table rather than only in the E10 prose; `tests/unit/test_report.py` covers it
+  (7 summary tests, 46 unit tests total). The paragraphs around the tables now describe the
+  direction of each table and its exceptions without reprinting measured numbers, which is
+  AGENTS.md rule 3 applied to prose as well as tables. Also recorded: the E12 deadline-miss
+  counts (120 for the ensembling rows, 141-147 for naive-r2) in docs/04 and docs/MODEL_CARD.
+  The ratios quoted in the docs were re-checked against `results/latency.jsonl`: 1.02-1.15x for
+  CUDA graphs on the pretrained policy against 4.7x for the same comparison on the 11 M
+  ablation model, where `torch.compile` was 5.8x faster than eager.

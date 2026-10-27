@@ -79,6 +79,47 @@ The brief says "about 7 GB usable". Measured: 8151 MiB nominal, 3428 MiB free wh
 | Kilted Kaiju | (24.04) | n/a | 2026-12-31 | [V] Do not start a new project on it. |
 | Lyrical Luth (LTS, May 2026) | 26.04 Tier 1; 24.04 Tier 3 | 3.12 to 3.14 supported; 3.14.3 on 26.04 | May 2031 | [V] |
 
+### 3.4 Pretrained-policy backend (optional, 2026-10-27)
+
+The policy this stack measures is a borrowed checkpoint, not a trained one (D11). It needs
+packages that are deliberately **not** project dependencies, because lerobot 0.6.1 pins
+`torch < 2.12` while this project pins `torch 2.14.1+cu130` (section 3.1):
+
+```bash
+just setup-pretrained     # scripts/setup_pretrained.sh
+```
+
+which runs
+
+```bash
+uv pip install --no-deps "lerobot==0.6.1"
+uv pip install "diffusers>=0.42" "draccus==0.11.6" "einops==0.8.2" "safetensors>=0.4" \
+  "opencv-python-headless>=4.9" termcolor
+```
+
+Measured combination on this host (2026-10-27): torch 2.14.1+cu130, torchvision 0.29.1,
+lerobot 0.6.1, diffusers 0.42.1, huggingface-hub 2.2.0, Python 3.12.13. Verified working,
+not supported: a normal `uv pip install lerobot` proposes torch 2.11.0 and numpy 2.2.6,
+which would invalidate every number measured on this GPU. `just setup` (`uv sync`) prunes the
+backend again, so re-run `just setup-pretrained` after a sync.
+
+`just doctor` checks all of this as PASS / FAIL / NOT RUN in a few seconds (Python, torch +
+CUDA, the simulator, the lockfile, the optional backend, the checkpoint's availability, and
+whether MSVC is present), so a fresh clone can tell "the environment is wrong" from "the
+experiment is wrong" before spending GPU time.
+
+Two consequences worth knowing before debugging anything:
+
+- lerobot 0.6.1 does not create the `normalize_inputs` / `unnormalize_outputs` modules this
+  2024 checkpoint was saved with, so `from_pretrained` reports those eight tensors as
+  unexpected keys and drops them. `flowpolicy.models.pretrained` reads them out of
+  `model.safetensors` and applies them. That glue is the one place a silent error still
+  produces a plausible-looking policy, which is why E0 exists as a gate.
+- The checkpoint (about 1.05 GB, 262.7 M parameters, fp32) downloads to
+  `~/.cache/huggingface` on first use. Set `HF_TOKEN` to silence the rate-limit warning.
+- The backend is imported lazily, so `just test`, the ablation training and trained-checkpoint
+  eval keep working with it absent.
+
 ## 4. Known pitfalls (checked in the gates)
 
 1. **Wrong CUDA wheel.** `cu126` installs, `torch.cuda.is_available()` may return true, but kernels for your arch are missing. Check the arch list (3.2).
