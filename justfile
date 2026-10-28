@@ -31,6 +31,11 @@ types:
 test: lint types
     uv run pytest -m "unit and not gpu"
 
+# CI smoke job (docs/01 section 4): 20 steps of real training on CPU, plus resume
+# equivalence at rtol=1e-5. No GPU, no dataset, no network.
+smoke:
+    uv run pytest -m "smoke" -q
+
 # Local-only: anything touching a GPU or a simulator.
 test-local:
     uv run pytest -m "integration or gpu or slow"
@@ -71,6 +76,19 @@ memory:
 # Latency ladder + real episodes/hour, with success and coverage on every arm.
 bench-stack episodes="4":
     uv run python scripts/bench_stack.py --episodes {{episodes}}
+
+# E8: does half precision buy a control period, and what does it cost the policy?
+bench-precision dtypes="float32 bfloat16 float16" episodes="40":
+    uv run python scripts/bench_precision.py --dtypes {{dtypes}} --episodes {{episodes}}
+
+# M9.6: the same loop with wall-clock sleeps, so deadline misses become measured lateness.
+# 12 episodes at each step count; run once per N (4 fits the period, 10 does not).
+bench-paced steps="4":
+    uv run python scripts/deploy_eval.py --ckpts hf:lerobot/diffusion_pusht --latencies 0 --seeds 10000 10001 10002 --episodes-per-seed 4 --steps {{steps}} --paced --out results/paced.jsonl
+
+# Load-test the serving boundary (client round trip vs in-process GPU time).
+bench-serve steps="4":
+    uv run python scripts/bench_serve.py --steps {{steps}}
 
 # Render one episode to an annotated GIF (packaging, not a measurement).
 demo steps="4" seed="10000":

@@ -24,6 +24,12 @@ def main() -> None:
         "--scheduler", default="ddim", choices=["ddim", "ddpm"], help="pretrained only"
     )
     parser.add_argument("--action-horizon", type=int, default=8)
+    parser.add_argument(
+        "--dtype",
+        default="float32",
+        choices=["float32", "fp32", "bfloat16", "bf16", "float16", "fp16"],
+        help="pretrained only, and only with --sampler fast (E8)",
+    )
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--out", type=Path, default=Path("results/eval.jsonl"))
@@ -43,6 +49,7 @@ def main() -> None:
         workers=args.workers,
         device=args.device,
         scheduler=args.scheduler,
+        dtype=args.dtype,
     )
     success = np.array([r["success"] for r in rows])
     coverage = np.array([r["coverage"] for r in rows])

@@ -86,6 +86,7 @@ addopts = "-ra --strict-markers --strict-config"
 testpaths = ["tests"]
 markers = [
     "unit: fast CPU-only tests; the only marker that runs in CI",
+    "smoke: end-to-end tiny training run on CPU; the CI smoke job (docs/01 section 4)",
     "integration: multi-component tests, local by default",
     "slow: runs longer than ~60 s",
     "gpu: needs a CUDA device; never runs in CI",

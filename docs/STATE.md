@@ -2,12 +2,41 @@
 
 | Field | Value |
 |---|---|
-| Current milestone | M8 packaging, third pass: measured value baseline (E14), 2026-10-28 |
-| Current step id | none (evals complete: E0, E3, E9, E10, E12, E14) |
+| Current milestone | M9 hardening (post-M8), 2026-10-28 |
+| Current step id | none (evals complete: E0, E3, E3-replication, E8, E9, E10, E12, E14, serving load, paced loop) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
-| Last completed step | M8.6 (2026-10-28): fast DDIM sampler + compile rows, E14 stack-value baseline, demo GIF, plain-language README, resume bullets |
-| Evidence | `just test` green (2026-10-28: ruff, ruff format, mypy strict on 26 files, 49 CPU unit tests; 13 GPU/integration tests run locally); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
+| Last completed step | M9.7 (2026-10-28): docs reconciliation, CI smoke job, E8 precision, E3 replication, serving load test, paced loop, E12 blend arm |
+| Evidence | `just test` green (2026-10-28: ruff, ruff format, mypy strict on 26 files, 57 CPU unit tests, 1 smoke test); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
+
+## What changed on 2026-10-28, M9 (hardening after packaging)
+
+Seven steps, in order, each either producing rows or making an already-written sentence true.
+
+- **M9.1 spec reconciliation.** `docs/04` E9 still said `torch.compile` was NOT RUN, the
+  README's reading order said the same, and `docs/00` advertised E0-E12. Fixed, E14 given a
+  matrix row, twelve acceptance boxes across docs/00-03 ticked with evidence or annotated as
+  unmet, and the two dangling `10_risk_register.md` references retargeted at `docs/06` section 2.
+- **M9.2 CI smoke job.** `tests/integration/test_train_smoke.py` (20 steps, loss falls, resume
+  matches at `rtol=1e-5`), new `smoke` marker, `just smoke`, CI job. This is the job docs/01
+  section 4 promised on 2026-10-18 and deferred "until a model exists".
+- **M9.3 E8 precision.** `--dtype fp32|bf16|fp16` through the adapter and runners (fast sampler
+  only), `scripts/bench_precision.py`, `results/precision.jsonl`. Half precision buys 1.3-1.4x
+  per chunk and half the VRAM but not a control period: the best N=10 row is still 1.4x over
+  100 ms, so the envelope stays N <= 4. Success over 40 paired episodes per dtype is
+  indistinguishable (35 % fp32, 50 % bf16, 45 % fp16, intervals overlapping).
+- **M9.4 E3 replication** on a second, independent 50-episode block (seeds 30000-30049):
+  coverage replicates to within 0.04 at every step count, success swings 6-14 pp, so the
+  plateau is real and the success ordering above N=2 is episode noise.
+- **M9.5 serving load test.** `scripts/bench_serve.py` spawns the real server and measures
+  client vs server time: 17.8 ms of JSON/socket per request and two clients serialising on the
+  GPU, with a 655 ms cold first request excluded by warmup.
+- **M9.6 paced loop.** `LoopConfig(paced=True)` / `--paced`: real sleeps, per-tick lateness.
+  N=4 holds the 100 ms period; N=10 falls behind and stays behind.
+- **M9.7 E12 third arm.** `strategy="blend"` cross-fades the queue into the new chunk. It
+  recovers coverage (0.875 / 0.864) but not success (26.7 % / 10.0 %), unlike temporal
+  ensembling (53.3 % / 43.3 %), so the pre-registered "inpainting-style is best" hypothesis is
+  refuted for the implementable version and ensembling remains the requirement.
 
 ## What changed on 2026-10-28 (the compile gap closed, and the value baseline)
 
@@ -128,15 +157,23 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
 - The backend lives outside `uv.lock`; `just setup` prunes it. Documented, not solved.
 - R5 (gym-pusht vs original PushT equivalence) is still unverified, but E0 now anchors the
   harness to an external published number, which is the stronger check.
-- E10 runs the loop in virtual time (no wall-clock pacing); inference is timed for real and
-  deadline misses are logged.
+- E10/E12 run the loop in virtual time; the paced rows (`results/paced.jsonl`) are separate
+  and smaller (12 episodes per step count), and the N=4 vs N=10 success difference there is
+  directional rather than separated.
+- E8 resolves about 15 pp at 40 paired episodes, not the 2 pp the pre-registered hypothesis
+  named: it can show "no gross regression" but not equality.
+- E12's third arm is a cross-fade over queued actions, not model-level inpainting; the
+  literature survey that would justify a stronger strategy is still `[U]`.
+- The serving load numbers are one quiet run on this laptop (`results/serve.jsonl`), not a
+  benchmark under contention.
 - The demo is a 55-frame GIF of one episode (`results/figures/demo_rollout.gif`, `just demo`),
   not a narrated video.
 - E14's per-arm episode count is small (4 for the cost arms, 20 for the equivalence check), so
   its success columns are indicative; the cost columns are per control step and do not depend on
   episode length.
-- E2, E4-E8, E11 not run; robomimic, ROS 2, Docker and the CUDA C++ extension are out of
-  scope on this host (D1, D6, D7). The Triton kernel stays an ablation result.
+- E2, E4-E7, E11 not run; robomimic, ROS 2, Docker and the CUDA C++ extension are out of
+  scope on this host (D1, D6, D7). The Triton kernel stays an ablation result. E8 now has rows
+  (on the pretrained checkpoint, not the ablation models it was registered against).
 
 ## Decision log (user answers, dated)
 
@@ -156,3 +193,4 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
 - 2026-10-27: owner asked what the verdict on the project was; answer: process strong, scientific content weak (null on success, floored signal).
 - 2026-10-27: owner asked to do a 180 -- use a model that is already good and work on the software infrastructure. Decisions taken with the owner: (1) wrap the `lerobot` package rather than reimplement the model, (2) full re-frame: adapter, validation, re-run E3/E9/E10, rewrite README and docs 00-07, (3) keep the from-scratch work as a documented ablation and delete the unrun E13 scaffolding.
 - 2026-10-28: owner asked to fix the outstanding issues, produce a measured usefulness baseline, and explain the software in plain terms plus XYZ resume bullets. Scope taken: close the compile gap at its cause, add E14 as the baseline, render a demo artifact, and write the explanation down (`README.md` top section, `docs/RESUME.md`) rather than only in chat.
+- 2026-10-28: owner asked to plot the remaining phases, then "proceed with the full implementation of EVERYTHING you planned" with M9.3 (E8 precision on the pretrained checkpoint) named explicitly. Scope taken: M9.1-M9.7 in the proposed order, one measurement per step, every claim entered in docs/04 with a "false if" condition, and the unmeasured remainder (E2, E4-E7, E11, narrated video) left declared rather than attempted.

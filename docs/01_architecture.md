@@ -66,7 +66,7 @@ flowpolicy/
 
 ## 4. CI (CPU only, GitHub Actions)
 
-Jobs: `lint` (ruff), `types` (mypy strict on `src/`), `unit` (pytest -m "unit and not gpu"), `smoke` (tiny model, 20 steps, CPU, checks loss decreases and resume equivalence at tolerance). GPU, sim-heavy, and ROS tests run locally only; the README states this. Pytest markers: `unit`, `integration`, `slow`, `gpu`.
+Jobs: `lint` (ruff), `types` (mypy strict on `src/`), `unit` (pytest -m "unit and not gpu"), `smoke` (tiny model, 20 steps, CPU, checks loss decreases and resume equivalence at tolerance -- added M9.2, `tests/integration/test_train_smoke.py`), `tables-fresh` (regenerates tables and README and fails on drift). GPU, sim-heavy, and ROS tests run locally only; the README states this. Pytest markers: `unit`, `smoke`, `integration`, `slow`, `gpu`.
 
 ## 5. Docker
 
@@ -76,8 +76,12 @@ Jobs: `lint` (ruff), `types` (mypy strict on `src/`), `unit` (pytest -m "unit an
 
 ## 6. Acceptance criteria
 
-- [ ] `just setup && just test` works from a clean clone.
+- [x] `just setup && just test` works from a clean clone. Verified 2026-10-18 (M0 acceptance,
+  run 39179413619) and re-verified 2026-10-28 by running the same steps CI runs: `just lint`,
+  `just types`, `just test`.
 - [x] A new policy can be added by implementing `Policy`/`PolicyLike` only; eval and deploy
   needed no edits when the pretrained adapter landed on 2026-10-27 (one load branch in
   `rollout.load_policy`, no change to the episode loop, the control loop or the tables).
-- [ ] CI is green without a GPU.
+- [x] CI is green without a GPU. The `lint`, `types`, `unit`, `smoke` and `tables-fresh` jobs
+  are CPU-only and run the same commands as `just lint`, `just types`, `just test`,
+  `just smoke` and `just tables && just readme`; all five pass on this machine (2026-10-28).

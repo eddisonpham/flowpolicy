@@ -91,6 +91,47 @@ def e3_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _block(group: list[dict[str, Any]]) -> tuple[str, str]:
+    """(success with CI, coverage with CI) for one episode block."""
+    point, lo, hi = bootstrap_ci(group)
+    cov_point, cov_lo, cov_hi = bootstrap_ci(group, metric="coverage")
+    return fmt_ci(point, lo, hi), f"{cov_point:.3f} [{cov_lo:.3f}, {cov_hi:.3f}]"
+
+
+def e3_replication_table(primary: list[dict[str, Any]], replication: list[dict[str, Any]]) -> str:
+    """E3's ladder on a second, independent episode block (2026-10-28).
+
+    The point is not a bigger sample, it is a separate one: if the ladder is a property of the
+    policy, an independent block of eval seeds should say the same thing; if it was episode
+    noise, this is where it shows.
+    """
+    lines = [
+        "| N | First block (n) success (95% CI) | coverage (95% CI) "
+        "| Replication (n) success (95% CI) | coverage (95% CI) | Coverage change |",
+        "|---|---|---|---|---|---|",
+    ]
+    steps = sorted(
+        {int(r["sampler_steps"]) for r in primary} | {int(r["sampler_steps"]) for r in replication}
+    )
+    for n in steps:
+        first = [r for r in primary if int(r["sampler_steps"]) == n]
+        second = [r for r in replication if int(r["sampler_steps"]) == n]
+        cells = []
+        delta = "-"
+        for group in (first, second):
+            if group:
+                success, coverage = _block(group)
+                cells.append(f"{success} ({len(group)}) | {coverage}")
+            else:
+                cells.append("not run | -")
+        if first and second:
+            cov_first = sum(float(r["coverage"]) for r in first) / len(first)
+            cov_second = sum(float(r["coverage"]) for r in second) / len(second)
+            delta = f"{cov_second - cov_first:+.3f}"
+        lines.append(f"| {n} | {cells[0]} | {cells[1]} | {delta} |")
+    return "\n".join(lines) + "\n"
+
+
 def latency_table(rows: list[dict[str, Any]]) -> str:
     lines = ["| Mode | N | Mean ms | p95 ms | Compile s |", "|---|---|---|---|---|"]
     for (mode, steps), group in sorted(
@@ -224,6 +265,81 @@ def stack_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def precision_table(rows: list[dict[str, Any]]) -> str:
+    """E8: half precision, both halves of the trade (cost and policy quality)."""
+    latency = sorted(
+        (r for r in rows if r.get("kind") == "latency"),
+        key=lambda r: (r["steps"], r["dtype"], r["mode"]),
+    )
+    lines = [
+        "| Dtype | Mode | N | Mean chunk ms | p95 ms | Control Hz | Peak VRAM MiB | Fits 100 ms |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for row in latency:
+        lines.append(
+            f"| {row['dtype']} | {row['mode']} | {row['steps']} | {row['mean_ms']:.1f} "
+            f"| {row['p95_ms']:.1f} | {1000.0 / row['mean_ms']:.2f} "
+            f"| {row['peak_vram_mb']:.0f} | {'yes' if row['fits_100ms'] else 'no'} |"
+        )
+
+    episodes = sorted((r for r in rows if r.get("kind") == "episode"), key=lambda r: r["dtype"])
+    if episodes:
+        lines += [
+            "",
+            "Same policy, same paired episodes, only the arithmetic dtype changes:",
+            "",
+            "| Dtype | N | Episodes | Success (95% CI) | Mean coverage | Mean chunk ms | Wall s |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for row in episodes:
+            ci = f"{row['success_rate']:.1%} [{row['success_lo']:.1%}, {row['success_hi']:.1%}]"
+            lines.append(
+                f"| {row['dtype']} | {row['steps']} | {row['episodes']} | {ci} "
+                f"| {row['coverage_mean']:.3f} | {row['chunk_ms']:.1f} | {row['wall_s']:.0f} |"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def paced_table(rows: list[dict[str, Any]]) -> str:
+    """M9.6: the loop with real sleeps, so lateness is wall-clock rather than a counter."""
+    lines = [
+        "| N | Period ms | Episodes | Success | Mean coverage | Deadline misses/chunk-episode "
+        "| Late ticks/episode | Mean lateness ms | p95 lateness ms | Wall s/episode |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    grouped = group_rows(rows, ["sampler_steps", "period_ms"])
+    for (steps, period), group in sorted(grouped.items()):
+        success = sum(float(r["success"]) for r in group) / len(group)
+        coverage = sum(float(r["coverage"]) for r in group) / len(group)
+        misses = sum(float(r["deadline_misses"]) for r in group) / len(group)
+        late = sum(float(r["late_ticks"]) for r in group) / len(group)
+        lateness = sum(float(r["lateness_mean_ms"]) for r in group) / len(group)
+        lateness_p95 = sum(float(r["lateness_p95_ms"]) for r in group) / len(group)
+        wall = sum(float(r["wall_s"]) for r in group) / len(group)
+        lines.append(
+            f"| {steps} | {period:g} | {len(group)} | {success:.0%} | {coverage:.3f} "
+            f"| {misses:.1f} | {late:.1f} | {lateness:.1f} | {lateness_p95:.1f} | {wall:.1f} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def serve_table(rows: list[dict[str, Any]]) -> str:
+    """The serving boundary: what a client pays, and what is the GPU."""
+    lines = [
+        "| Clients | Requests | Client p50 ms | Client p95 ms | Client max ms "
+        "| Server p50 ms | Server p95 ms | HTTP overhead p50 ms | Req/s |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for row in sorted(rows, key=lambda r: r["concurrency"]):
+        lines.append(
+            f"| {row['concurrency']} | {row['requests']} | {row['client_p50_ms']:.1f} "
+            f"| {row['client_p95_ms']:.1f} | {row['client_max_ms']:.1f} "
+            f"| {row['server_p50_ms']:.1f} | {row['server_p95_ms']:.1f} "
+            f"| {row['http_overhead_p50_ms']:.2f} | {row['requests_per_s']:.2f} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     jobs = {
@@ -232,6 +348,9 @@ def main() -> None:
         "e9_latency.md": (ROOT / "latency.jsonl", latency_table),
         "e10_deploy.md": (ROOT / "deploy.jsonl", deploy_table),
         "e14_stack.md": (ROOT / "stack.jsonl", stack_table),
+        "e8_precision.md": (ROOT / "precision.jsonl", precision_table),
+        "serve_load.md": (ROOT / "serve.jsonl", serve_table),
+        "paced_loop.md": (ROOT / "paced.jsonl", paced_table),
         # Ablation: the from-scratch policies and the training-cost measurements that
         # the pretrained checkpoint replaced (docs/04 section 4).
         "e1_ablation.md": (ABLATION / "e1.jsonl", e1_table),
@@ -251,11 +370,18 @@ def main() -> None:
             "e3": read(ROOT / "e3.jsonl"),
             "e9": read(ROOT / "latency.jsonl"),
             "e10": read(ROOT / "deploy.jsonl"),
+            "e8": read(ROOT / "precision.jsonl"),
             "e14": read(ROOT / "stack.jsonl"),
         }
     )
     (OUT / "headline.md").write_text(headline)
     print(f"wrote {OUT / 'headline.md'}")
+
+    replication = read(ROOT / "e3_replication.jsonl")
+    if replication:
+        primary = read(ROOT / "e3.jsonl")
+        (OUT / "e3_replication.md").write_text(e3_replication_table(primary, replication))
+        print(f"wrote {OUT / 'e3_replication.md'} ({len(replication)} rows)")
 
     kernel_rows = read(ABLATION / "kernel.jsonl")
     if kernel_rows:

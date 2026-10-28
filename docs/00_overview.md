@@ -14,10 +14,10 @@ Source of truth for scope: the FlowPolicy Agent Brief. This file restates it, th
 | [01_architecture.md](01_architecture.md) | diagram, interfaces, repo layout, CI, Docker |
 | [02_environment_setup.md](02_environment_setup.md) | verified versions, setup, gates G1-G9 |
 | [03_data_models_training.md](03_data_models_training.md) | data, DP recipe, policies, trainer, failure tests |
-| [04_eval_and_experiments.md](04_eval_and_experiments.md) | pre-registered protocol, experiment matrix E0-E12 |
+| [04_eval_and_experiments.md](04_eval_and_experiments.md) | pre-registered protocol, experiment matrix E0-E14 |
 | [05_inference_and_deployment.md](05_inference_and_deployment.md) | latency ladder, Triton, ROS 2, async chunking |
-| [06_decisions_and_risks.md](06_decisions_and_risks.md) | D1-D10 and risk register |
-| [07_roadmap.md](07_roadmap.md) | milestones M0-M8, agent rules, packaging |
+| [06_decisions_and_risks.md](06_decisions_and_risks.md) | D1-D11 and risk register |
+| [07_roadmap.md](07_roadmap.md) | milestones M0-M9, agent rules, packaging |
 | [MODEL_CARD.md](MODEL_CARD.md) | the borrowed policy and this stack: data, intended use, metrics with intervals, limitations |
 
 Coding agent: read 07 first, then the file for the current milestone.
@@ -109,18 +109,28 @@ The brief was written with some assumptions that are out of date as of 2026-10-1
 - **Gate:** a pass/fail smoke test that must pass before the dependent work starts.
 - **SDPA:** `torch.nn.functional.scaled_dot_product_attention`.
 
-## 6. Open questions
+## 6. Open questions (answered 2026-10-28)
 
-- Which Ubuntu version is the host? (Decides ROS 2 distro and Docker base image.)
-- Exact GPU model and VRAM (brief says RTX 5060-class, about 7 GB usable). Unverified until `nvidia-smi` output is recorded.
-- Is the host Linux native, or Windows with WSL2? Driver and Docker GPU passthrough steps differ. Not stated in the brief.
-- Decisions D1 to D8 remain open; ADRs come in Stage 2.
+- **Which Ubuntu version is the host?** None: the host is Windows 11 build 26200, Git Bash, one
+  laptop (recorded 2026-10-18, `docs/02` section 2). ROS 2 and Docker therefore stay out of
+  scope (D7, G9a NOT RUN).
+- **Exact GPU model and VRAM?** RTX 5060 Laptop, 8151 MiB, driver 617.42, compute capability
+  (12, 0) -- measured 2026-10-19, `docs/02` section 2.
+- **Linux native or WSL2?** Neither. Native Windows, no WSL2 (2026-10-18).
+- **Decisions D1-D8 open?** Closed 2026-10-19 and 2026-10-27: D1-D11 all carry a `CHOSEN` entry
+  with a date in `docs/06` section 1.
 
 ## 7. Next actions
 
-- [ ] Owner: complete the day-one checklist above and fill in 02, sections 2 and 8.
-- [ ] Agent (Stage 2): ADR-001 to ADR-008 using the findings in 02.
-- [ ] Agent (Stage 3): Diffusion Policy PushT recipe, pi0 and ACT summaries, async chunking survey.
+- [x] Owner: fill 02 sections 2 and 8. Done 2026-10-19 (driver 617.42, gates G1-G5 re-run).
+- [x] Agent (Stage 2): ADR-001 to ADR-008. Done 2026-10-18, consolidated as D1-D11 in `docs/06`
+  rather than as separate ADR files; D11 added 2026-10-27.
+- [x] Agent (Stage 3): Diffusion Policy PushT recipe, pi0 and ACT summaries, async chunking
+  survey. Recipe and the pi0/ACT reading list are in `docs/03` section 2 and `docs/07`
+  section 3, sourced from replicating papers and the LeRobot port and tagged `[S]`/`[U]`
+  accordingly; the async-chunking survey is still `[U]` -- no paper was read line by line,
+  and that is why E12's third strategy is implemented from first principles and labelled as
+  such rather than attributed to a paper.
 
 ## 8. Acceptance criteria (for this document)
 

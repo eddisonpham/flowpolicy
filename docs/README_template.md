@@ -147,6 +147,17 @@ overlaps. Chunk latency grows linearly in N, so the step count is the dial that 
 a control period is reachable at all. Measured under two-worker contention; the clean
 single-process numbers are E9.
 
+An independent block of 50 fresh eval seeds re-runs the ladder, because "the plateau is real"
+is a claim about the policy and not about one sample of episodes:
+
+{{E3_REPLICATION_TABLE}}
+
+Reading it: coverage replicates to within a couple of hundredths at every step count, so the
+plateau and the two-step collapse are properties of the policy. Success does not replicate --
+the block-to-block swing is larger than any difference between step counts above two -- which
+is what the intervals in the table above were already saying, now demonstrated rather than
+argued.
+
 ### E9: batch-1 latency ladder
 
 {{E9_TABLE}}
@@ -161,6 +172,15 @@ sampler in `src/flowpolicy/models/fast_sampler.py` removes that partition, which
 `torch.compile` and `CUDAGraph` measurable on this checkpoint at all. `docs/05` section 1 has
 the mechanism.
 
+### E8: does half precision buy a control period?
+
+{{E8_TABLE}}
+
+Reading it: half precision is cheaper per chunk and much smaller in VRAM, and at N=10 it is
+still over the period, so the envelope does not move -- fewer sampler steps remain the only
+knob that changes what fits. On the policy side all three arms land inside each other's
+intervals at 40 paired episodes, which is a no-gross-regression check, not an equality proof.
+
 ### E10: injected observation latency in the fixed-rate loop
 
 {{E10_TABLE}}
@@ -168,7 +188,10 @@ the mechanism.
 `naive` replans when the 8-step action queue empties; the `-r2` rows replan every 2 steps so
 four chunks overlap, which is the only regime where temporal ensembling differs from naive
 replacement. The loop runs in virtual time; chunk inference is timed for real, and every
-chunk that exceeds the 100 ms period is logged as a deadline miss.
+chunk that exceeds the 100 ms period is logged as a deadline miss. `--paced` instead sleeps
+to the tick, which turns that counter into measured wall-clock lateness; `--strategy blend`
+adds the third arm (cross-fading the queue into a new chunk) next to naive replacement and
+temporal ensembling.
 
 ![E10 success](results/figures/e10_success_vs_latency.png)
 ![E10 latency histogram](results/figures/e10_latency_hist.png)
@@ -185,6 +208,35 @@ and at that rate naive replacement collapses -- its intervals do not come near t
 at the same injected latency -- while uniform temporal ensembling over the same chunks recovers
 to roughly the naive level, at four times the chunk count and a much heavier deadline-miss
 penalty. Replanning fast is not free: without ensembling it is actively harmful.
+
+The third arm (`blend`) cross-fades the queue into each new chunk instead of replacing or
+averaging it. It holds coverage near the ensembling rows but not success, which separates the
+two effects: smoothing the splice helps the policy reach the goal, while averaging several
+chunks is what converts that into successes.
+
+### Real-time pacing (does the loop actually keep the period?)
+
+E10/E12 run in virtual time, so a deadline miss is a counter. `just bench-paced` makes the loop
+sleep to the tick and reports how far behind the wall clock it falls:
+
+{{PACED_TABLE}}
+
+Reading it: at the operating point the loop holds the 100 ms period and the wall clock is
+exactly the step count times the period. At N=10 it does not: once a chunk overruns, the loop
+never catches up, so the lateness is not a spike that recovers but a floor it carries for the
+rest of the episode.
+
+## Serving the policy over a process boundary
+
+`just serve` puts the same policy behind a stdlib-only HTTP endpoint with a documented JSON
+contract (`docs/05` section 3), so the measured latency is something a client can actually
+consume. `just bench-serve` loads that endpoint and reports what a client pays:
+
+{{SERVE_TABLE}}
+
+Reading it: the GPU chunk time is the bulk of the round trip, and the JSON/socket overhead is
+a fixed slice of it rather than a rounding error -- which is why the serving path is measured
+rather than assumed. Two clients do not run in parallel; they queue on the GPU.
 
 ## Ablation: what we tried first
 
@@ -217,11 +269,15 @@ Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 | `just setup-pretrained` | adds the optional backend (lerobot 0.6.1 + diffusers) outside the lock | ~1 min, ~2 GB |
 | `just doctor` | environment check: versions, CUDA, backend, checkpoint availability | seconds |
 | `just test` | ruff + mypy strict + CPU unit tests (what CI runs) | ~10 s |
+| `just smoke` | 20 steps of real training on CPU + resume equivalence (the CI smoke job) | ~5 s |
 | `just eval-e0` | the acceptance gate: 100 episodes, two samplers | ~50 min |
 | `just eval-e3` | DDIM step sweep, 300 episodes | ~25 min |
 | `just latency-ladder` | batch-1 latency ladder, 12 rows | ~15 min |
 | `just eval-e10` | latency injection + async chunking, 270 episodes | ~75 min |
 | `just bench-stack` | E14: published vs stock vs fast sampler, latency + episodes/hour | ~25 min |
+| `just bench-precision` | E8: fp32 vs bf16 vs fp16, latency ladder + 40 paired episodes each | ~20 min |
+| `just bench-serve` | load-test the HTTP boundary (client vs server latency) | ~2 min |
+| `just bench-paced steps=4` | wall-clock paced loop at one step count (12 episodes) | ~7 min |
 | `just demo` | render one episode to an annotated GIF (`results/figures/demo_rollout.gif`) | ~1 min |
 | `just report` | one-screen summary of everything measured so far | seconds |
 | `just serve` | serve the policy over local HTTP (`docs/05` section 4) | seconds to start |
@@ -239,7 +295,8 @@ the rest: `lint`, `types`, `format`, `hooks`, `test-local`, `data`, `memory`, `k
 1. `docs/04_eval_and_experiments.md` -- protocol, experiment matrix, claims with their
    "false if" conditions, and the dated deviations log (the honest part).
 2. `docs/05_inference_and_deployment.md` -- the latency ladder, the control loop, async
-   chunking, and why compile is NOT RUN.
+   chunking, and why the sampler had to lose its host-side scalars before compile or CUDA
+   graphs would apply at all.
 3. `docs/02_environment_setup.md` -- versions and the two-environment story for the backend
    (section 3.4).
 4. `docs/01_architecture.md` -- the policy interface, and why the substrate swap touched

@@ -50,6 +50,19 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest -m "unit and not gpu"
 
+  # docs/01 section 4 promises a tiny end-to-end training run, not just component tests:
+  # 20 steps on synthetic data must lower the loss and survive a resume at rtol=1e-5.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest -m "smoke" -q
+
   # Guards the invariant that every published number comes from results/*.jsonl: the
   # checked-in tables must be exactly what the generators produce from the checked-in rows.
   tables-fresh:

@@ -29,6 +29,7 @@ Work strictly in order. A milestone is done only when its acceptance checks pass
 | M6 | 6 | E9 ladder, E8; one Triton kernel (D6 stretch only after M5 is done) | latency table; kernel equivalence + benchmark | skip Triton, keep compile + graphs |
 | M7 | 7 | Deployment loop (ROS 2 or plain), async chunking, E10, E11, E12 | deadline-miss log and latency histogram; E10 figure | plain Python loop |
 | M8 | 8 | Packaging (section 2). Protected week | checklist in section 2 complete | never cut |
+| M9 | post-MVP | Hardening after packaging: spec reconciliation, CI `smoke` job, E8 precision on the pretrained checkpoint, E3 replication, serving load test, wall-clock paced loop, E12's third strategy | no document contradicts `results/`; `just smoke` green in CI; every new row has a claim with a "false if" condition | drop the optional rows and say so; the doc reconciliation is never cut |
 
 Stretch work (D6) may start only after M5 acceptance. If a phase overruns by more than a few
 days, invoke its fallback and log it.
@@ -39,6 +40,16 @@ from-scratch policies: E1 became the ablation table, E3 sweeps DDIM steps on the
 checkpoint, and M6/M7 keep their acceptance criteria but measure the 262.7 M-parameter model,
 which is the harder and more deployment-relevant target. M8 packaging repeats with the
 tables regenerated. The scaffolded 36000-step augmented run (E13) was removed unrun.
+
+**M9 status 2026-10-28:** the hardening pass ran after packaging, in this order -- spec
+reconciliation (no doc may contradict `results/`), the CI `smoke` job that section 1's M0 row
+and docs/01 section 4 had promised since 2026-10-18, E8 precision on the pretrained checkpoint,
+an independent E3 replication block, a load test of the serving boundary, a wall-clock paced
+mode for the control loop, and E12's third strategy. Each one either produced rows in
+`results/` or closed a documented gap; the ones that produced no new claim (the CI job, the
+paced mode) exist so that a sentence already written in the docs becomes true. The narrated
+demo video stays a permanent deviation (section 2): this host has no encoder and no narration
+path, and adding one for packaging alone is not worth a dependency.
 
 ## 2. Packaging (M8)
 
@@ -55,7 +66,11 @@ exist. M8 added one item the original checklist did not have: a **measured basel
 stack itself** (E14), because "an inference stack" without a "compared to what" is a
 portfolio piece rather than an argument.
 
-Demo video (about 60-90 s): side-by-side policy rollouts for flow vs baseline, then the latency/success plot, one on-screen line stating sim only.
+Demo video (about 60-90 s): side-by-side policy rollouts for flow vs baseline, then the latency/success plot, one on-screen line stating sim only. **Not produced, and now a
+permanent deviation rather than a to-do:** the host has no video encoder (no `ffmpeg`) and no
+narration path, so `results/figures/demo_rollout.gif` (one episode, loop timings drawn on each
+frame, `just demo`) is the demo artifact. Adding a video would mean a new dependency for
+packaging only.
 
 Honest-claims checklist (all must be yes before posting):
 - [x] Every number traces to a JSONL file in `results/` (2026-10-27: pretrained rows in
@@ -65,7 +80,9 @@ Honest-claims checklist (all must be yes before posting):
 - [x] Null and negative results are shown (2026-10-27: the from-scratch policies' 4-7 %
   success is reported as the reason for the pivot rather than hidden, and the Triton
   kernel's loss to `torch.compile` stays in the ablation section).
-- [ ] "Bit-exact" appears only if the bitwise test passes.
+- [x] "Bit-exact" appears only if the bitwise test passes. It appears nowhere as a claim:
+  `grep -rn "bit-exact"` matches only the rules forbidding it and the sentences saying the
+  result is tolerance-based (`rtol=1e-5`).
 - [x] Limitations stated: simulation only, borrowed policy, one checkpoint (so episode-level
   intervals), virtual-time loop, backend installed outside the lockfile.
 
@@ -84,6 +101,9 @@ LinkedIn series (3-4 posts): problem and approach; architecture; what broke (a r
 
 ## 4. Acceptance criteria for the whole plan
 
-- [ ] A fresh agent can run M0 and M1 from these docs without further research.
-- [ ] Every open decision in [06](06_decisions_and_risks.md) has a recommendation and a trigger that changes it.
-- [ ] The experiment matrix in [04](04_eval_and_experiments.md) has compute filled after M2.
+- [ ] A fresh agent can run M0 and M1 from these docs without further research. **Not met as
+  written:** M1 needs `gym-pusht` data and an HF download, and the doc still describes the
+  Ubuntu path; `docs/STATE.md` and `docs/02` carry the Windows facts instead. A clean-clone dry
+  run would be the honest check and has not been done.
+- [x] Every open decision in [06](06_decisions_and_risks.md) has a recommendation and a trigger that changes it. D1-D11 all carry a `CHOSEN` entry with a date and a "what would change it" cell; R1-R14 carry kill/fallback triggers.
+- [x] The experiment matrix in [04](04_eval_and_experiments.md) has compute filled after M2. Every row carries either measured GPU time or `not run` with the reason (G8 NOT RUN, D1); E14 was added 2026-10-28 with its own compute column.

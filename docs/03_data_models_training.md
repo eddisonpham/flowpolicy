@@ -89,7 +89,18 @@ The 1800-step E1 runs used batch 64, which peaks at 4.41 GiB and leaves room for
 
 ## 7. Acceptance criteria
 
-- [ ] Recipe table in section 2 has paper-sourced rows and metric definition.
-- [ ] Each policy overfits a tiny set; loss curves committed in `results/`.
-- [ ] Memory table filled by measurement; no row left TBD at training time.
-- [ ] Resume-equivalence test in CI; wording on determinism matches test outcome.
+- [ ] Recipe table in section 2 has paper-sourced rows and metric definition. **Not met, and
+  left open deliberately:** the recipe is sourced from replicating papers and the LeRobot port
+  and tagged `[S]`/`[U]`, not read off the Diffusion Policy paper. Under D11 the from-scratch
+  recipe is the ablation path, so verifying it against the paper would not change any result.
+  The metric definition (max overlap >= 95 %) *is* anchored: E0 reproduces the published
+  64.0 % vs 65.4 % with it.
+- [x] Each policy overfits a tiny set; loss curves committed in `results/`. Done 2026-10-19:
+  flow 1.230 -> 0.065, DDPM 1.096 -> 0.091, regression 0.376 -> 0.029 on 8 episodes;
+  `results/overfit/summary.json`, `results/tables/overfit.md`.
+- [x] Memory table filled by measurement; no row left TBD at training time. Done 2026-10-19:
+  `results/ablation/memory.jsonl`, `results/tables/m2_memory.md` (batch 32/64/128 measured, the
+  128 row flagged as not fitting rather than omitted).
+- [x] Resume-equivalence test in CI; wording on determinism matches test outcome. Done: the
+  tolerance-based test runs in the `unit` job and the 20-step end-to-end run in the `smoke`
+  job; docs, code and README say "tolerance-based (`rtol=1e-5`)", never "bit-exact".

@@ -53,6 +53,12 @@ def main() -> None:
         choices=["stock", "fast"],
         help="pretrained DDIM loop: lerobot's (stock) or ours (fast, compilable)",
     )
+    parser.add_argument(
+        "--dtype",
+        default="float32",
+        choices=["float32", "fp32", "bfloat16", "bf16", "float16", "fp16"],
+        help="pretrained only; half precision needs --sampler fast (E8)",
+    )
     parser.add_argument("--warmup", type=int, default=50)
     parser.add_argument("--iters", type=int, default=200)
     parser.add_argument("--device", default="cuda")
@@ -66,6 +72,7 @@ def main() -> None:
         use_ema=True,
         scheduler=args.scheduler,
         sampler=args.sampler,
+        dtype=args.dtype,
     )
     if args.mode.startswith("compile-"):
         _warn_if_no_msvc()
@@ -86,6 +93,7 @@ def main() -> None:
             "policy": meta["policy"],
             "train_seed": meta["train_seed"],
             "params": meta["params"],
+            "dtype": meta.get("dtype", "float32"),
             "timestamp": datetime.now(UTC).isoformat(),
             "driver": torch.version.cuda,
         }

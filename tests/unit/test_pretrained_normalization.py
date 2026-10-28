@@ -16,6 +16,7 @@ from flowpolicy.models.pretrained import (
     denormalize_action,
     normalize_image,
     normalize_state,
+    resolve_dtype,
 )
 
 pytestmark = pytest.mark.unit
@@ -47,6 +48,17 @@ def test_denormalize_action_inverts_normalize_state() -> None:
     values = torch.linspace(0.0, 1.0, 11).view(1, 11, 1).expand(1, 11, 2).contiguous()
     back = denormalize_action(normalize_state(values, low, high), low, high)
     assert torch.allclose(back, values, atol=1e-5)
+
+
+def test_resolve_dtype_accepts_both_spellings() -> None:
+    assert resolve_dtype("float32") == resolve_dtype("fp32") == torch.float32
+    assert resolve_dtype("bfloat16") == resolve_dtype("bf16") == torch.bfloat16
+    assert resolve_dtype("float16") == resolve_dtype("fp16") == torch.float16
+
+
+def test_resolve_dtype_rejects_unknown_names_with_the_options() -> None:
+    with pytest.raises(ValueError, match="unknown dtype"):
+        resolve_dtype("float8")
 
 
 def test_normalize_state_is_not_in_place() -> None:

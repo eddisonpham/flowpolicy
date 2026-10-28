@@ -126,12 +126,18 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        # Read the body *before* deciding the path, even for an unknown one. HTTP/1.1
+        # keep-alive means an unread body is parsed as the next request line, so a client that
+        # posts to the wrong path used to see a connection reset instead of the 404 (which is
+        # how `test_unknown_path_is_404` failed intermittently). Discarding it keeps the error
+        # the contract promises.
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length else b""
         if self.path.rstrip("/") != "/chunk":
             self._send(404, {"error": f"unknown path {self.path}"})
             return
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(raw or b"{}")
             policy = self.server.policy
             obs = build_obs(payload, policy.obs_horizon, self.server.device)
             steps = int(payload.get("steps", self.server.steps))

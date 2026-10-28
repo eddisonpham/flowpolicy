@@ -116,6 +116,7 @@ A rendered episode with the loop's own timings on the frame is in
 | Does the harness reproduce the published policy? | Yes: 64.0% [52.0%, 78.0%] success and 0.924 [0.878, 0.953] mean coverage over 50 paired episodes at DDIM N=10, against the model card's 65.4 % / 0.955 | E0 |
 | How few sampler steps still work? | 0.121 at N=1; 0.716 at N=2; 0.885 at N=4; 0.919 at N=8; 0.888 at N=10; 0.892 at N=16. The ladder is flat after N=4 (coverage intervals overlap there); chunk latency keeps growing linearly in N, in the table below | E3 |
 | What does one chunk cost at batch 1? | 73.5 ms eager / 66.8 ms graph at N=4; 190.5 ms eager / 181.0 ms graph at N=10. CUDA graphs are worth 1.05x here, against 4.7x on the 11 M ablation model. `torch.compile` runs on this repo's DDIM sampler (overhead mode): 65.6 ms at N=4 against 73.5 ms for the stock loop, i.e. 1.12x -- so compile and graphs are worth a tenth, not the 4.7x/5.8x they were worth on the 11 M ablation model: at 262.7 M parameters the network, not the launcher, is the cost | E9 |
+| Does half precision buy a control period? | No. The best half-precision configuration (bfloat16, cudagraph) cuts a chunk to 55.6 ms at N=4 from 73.4 ms in fp32 (1.32x) and to 136.7 ms at N=10 from 194.4 ms (1.42x), which is still over a 100 ms period: the deployable envelope stays N <= 4. On paired episodes bfloat16 50% [35%, 65%], float16 45% [30%, 60%], float32 35% [22%, 50%] -- overlapping, so no gross regression rather than equality | E8 |
 | Does injected observation latency hurt? | success 57% at 0 ms injected vs 43% at 200 ms injected (30 episodes per row, CIs overlapping). The binding constraint is the policy's own cost: 29 deadline misses per episode against a 100 ms period | E10 |
 | Does replanning four times faster break it? | Yes for naive replacement: 10% at 100 ms and 10% at 200 ms against 57% / 43% when replanning every 8 steps; uniform temporal ensembling over the same overlapping chunks recovers 53% / 43% at 4x the chunk count | E12 |
 | What does the stack buy over running the checkpoint as published? | 23.9 s of GPU time per 100 control steps as published (DDPM@100) versus 1.19 s at the operating point this repo selects (DDIM N=4), i.e. 20x cheaper, with success 50% -> 75% and coverage 0.947 -> 0.961 on the same 4 episodes; two rollout workers cost 1.8x per control step, because one process already saturates the GPU | E14 |
@@ -190,6 +191,24 @@ overlaps. Chunk latency grows linearly in N, so the step count is the dial that 
 a control period is reachable at all. Measured under two-worker contention; the clean
 single-process numbers are E9.
 
+An independent block of 50 fresh eval seeds re-runs the ladder, because "the plateau is real"
+is a claim about the policy and not about one sample of episodes:
+
+| N | First block (n) success (95% CI) | coverage (95% CI) | Replication (n) success (95% CI) | coverage (95% CI) | Coverage change |
+|---|---|---|---|---|---|
+| 1 | 0.0% [0.0%, 0.0%] (50) | 0.121 [0.076, 0.165] | not run | - | - |
+| 2 | 20.0% [10.0%, 32.0%] (50) | 0.716 [0.627, 0.804] | 24.0% [12.0%, 36.0%] (50) | 0.761 [0.676, 0.835] | +0.044 |
+| 4 | 42.0% [30.0%, 56.0%] (50) | 0.885 [0.847, 0.919] | 38.0% [26.0%, 52.0%] (50) | 0.897 [0.866, 0.924] | +0.012 |
+| 8 | 60.0% [46.0%, 74.0%] (50) | 0.919 [0.892, 0.940] | 48.0% [34.0%, 62.0%] (50) | 0.902 [0.868, 0.931] | -0.016 |
+| 10 | 54.0% [40.0%, 68.0%] (50) | 0.888 [0.831, 0.936] | 40.0% [26.0%, 54.0%] (50) | 0.896 [0.860, 0.926] | +0.008 |
+| 16 | 54.0% [40.0%, 66.0%] (50) | 0.892 [0.847, 0.930] | not run | - | - |
+
+Reading it: coverage replicates to within a couple of hundredths at every step count, so the
+plateau and the two-step collapse are properties of the policy. Success does not replicate --
+the block-to-block swing is larger than any difference between step counts above two -- which
+is what the intervals in the table above were already saying, now demonstrated rather than
+argued.
+
 ### E9: batch-1 latency ladder
 
 | Mode | N | Mean ms | p95 ms | Compile s |
@@ -217,16 +236,48 @@ sampler in `src/flowpolicy/models/fast_sampler.py` removes that partition, which
 `torch.compile` and `CUDAGraph` measurable on this checkpoint at all. `docs/05` section 1 has
 the mechanism.
 
+### E8: does half precision buy a control period?
+
+| Dtype | Mode | N | Mean chunk ms | p95 ms | Control Hz | Peak VRAM MiB | Fits 100 ms |
+|---|---|---|---|---|---|---|---|
+| bfloat16 | cudagraph | 4 | 55.6 | 59.1 | 17.99 | 710 | yes |
+| bfloat16 | eager | 4 | 65.6 | 68.9 | 15.24 | 646 | yes |
+| float16 | cudagraph | 4 | 56.5 | 57.1 | 17.69 | 774 | yes |
+| float16 | eager | 4 | 68.2 | 73.6 | 14.66 | 710 | yes |
+| float32 | cudagraph | 4 | 73.4 | 78.5 | 13.63 | 1189 | yes |
+| float32 | eager | 4 | 78.1 | 81.0 | 12.81 | 1125 | yes |
+| bfloat16 | cudagraph | 10 | 138.4 | 146.0 | 7.23 | 742 | no |
+| bfloat16 | eager | 10 | 152.3 | 157.6 | 6.57 | 678 | no |
+| float16 | cudagraph | 10 | 136.7 | 138.7 | 7.31 | 806 | no |
+| float16 | eager | 10 | 155.3 | 158.3 | 6.44 | 742 | no |
+| float32 | cudagraph | 10 | 194.4 | 201.2 | 5.14 | 1221 | no |
+| float32 | eager | 10 | 209.0 | 226.0 | 4.79 | 1157 | no |
+
+Same policy, same paired episodes, only the arithmetic dtype changes:
+
+| Dtype | N | Episodes | Success (95% CI) | Mean coverage | Mean chunk ms | Wall s |
+|---|---|---|---|---|---|---|
+| bfloat16 | 4 | 40 | 50.0% [35.0%, 65.0%] | 0.885 | 62.7 | 104 |
+| float16 | 4 | 40 | 45.0% [30.0%, 60.0%] | 0.901 | 62.8 | 106 |
+| float32 | 4 | 40 | 35.0% [22.5%, 50.0%] | 0.900 | 79.3 | 131 |
+
+Reading it: half precision is cheaper per chunk and much smaller in VRAM, and at N=10 it is
+still over the period, so the envelope does not move -- fewer sampler steps remain the only
+knob that changes what fits. On the policy side all three arms land inside each other's
+intervals at 40 paired episodes, which is a no-gross-regression check, not an equality proof.
+
 ### E10: injected observation latency in the fixed-rate loop
 
 | Latency ms | Strategy | Success (95% CI) | Mean coverage | Deadline misses / episode |
 |---|---|---|---|---|
 | 0 | naive | 56.7% [40.0%, 73.3%] | 0.917 | 29.33 |
 | 50 | naive | 60.0% [43.3%, 76.7%] | 0.932 | 26.37 |
+| 100 | blend-r2 | 26.7% [13.3%, 43.3%] | 0.875 | 131.70 |
 | 100 | naive | 56.7% [40.0%, 73.3%] | 0.897 | 26.97 |
 | 100 | naive-r2 | 10.0% [0.0%, 20.1%] | 0.749 | 141.60 |
 | 100 | temporal-ensemble-r2 | 53.3% [36.7%, 70.0%] | 0.926 | 120.37 |
 | 150 | naive | 46.7% [30.0%, 63.3%] | 0.914 | 31.40 |
+| 200 | blend-r2 | 10.0% [0.0%, 20.0%] | 0.864 | 142.80 |
 | 200 | naive | 43.3% [26.7%, 60.0%] | 0.915 | 33.00 |
 | 200 | naive-r2 | 10.0% [0.0%, 23.3%] | 0.553 | 147.40 |
 | 200 | temporal-ensemble-r2 | 43.3% [26.7%, 60.0%] | 0.880 | 120.73 |
@@ -234,7 +285,10 @@ the mechanism.
 `naive` replans when the 8-step action queue empties; the `-r2` rows replan every 2 steps so
 four chunks overlap, which is the only regime where temporal ensembling differs from naive
 replacement. The loop runs in virtual time; chunk inference is timed for real, and every
-chunk that exceeds the 100 ms period is logged as a deadline miss.
+chunk that exceeds the 100 ms period is logged as a deadline miss. `--paced` instead sleeps
+to the tick, which turns that counter into measured wall-clock lateness; `--strategy blend`
+adds the third arm (cross-fading the queue into a new chunk) next to naive replacement and
+temporal ensembling.
 
 ![E10 success](results/figures/e10_success_vs_latency.png)
 ![E10 latency histogram](results/figures/e10_latency_hist.png)
@@ -251,6 +305,41 @@ and at that rate naive replacement collapses -- its intervals do not come near t
 at the same injected latency -- while uniform temporal ensembling over the same chunks recovers
 to roughly the naive level, at four times the chunk count and a much heavier deadline-miss
 penalty. Replanning fast is not free: without ensembling it is actively harmful.
+
+The third arm (`blend`) cross-fades the queue into each new chunk instead of replacing or
+averaging it. It holds coverage near the ensembling rows but not success, which separates the
+two effects: smoothing the splice helps the policy reach the goal, while averaging several
+chunks is what converts that into successes.
+
+### Real-time pacing (does the loop actually keep the period?)
+
+E10/E12 run in virtual time, so a deadline miss is a counter. `just bench-paced` makes the loop
+sleep to the tick and reports how far behind the wall clock it falls:
+
+| N | Period ms | Episodes | Success | Mean coverage | Deadline misses/chunk-episode | Late ticks/episode | Mean lateness ms | p95 lateness ms | Wall s/episode |
+|---|---|---|---|---|---|---|---|---|---|
+| 4 | 100 | 12 | 83% | 0.947 | 0.0 | 0.2 | 1.1 | 1.1 | 22.0 |
+| 10 | 100 | 12 | 25% | 0.943 | 35.2 | 52.5 | 65.8 | 102.9 | 27.7 |
+
+Reading it: at the operating point the loop holds the 100 ms period and the wall clock is
+exactly the step count times the period. At N=10 it does not: once a chunk overruns, the loop
+never catches up, so the lateness is not a spike that recovers but a floor it carries for the
+rest of the episode.
+
+## Serving the policy over a process boundary
+
+`just serve` puts the same policy behind a stdlib-only HTTP endpoint with a documented JSON
+contract (`docs/05` section 3), so the measured latency is something a client can actually
+consume. `just bench-serve` loads that endpoint and reports what a client pays:
+
+| Clients | Requests | Client p50 ms | Client p95 ms | Client max ms | Server p50 ms | Server p95 ms | HTTP overhead p50 ms | Req/s |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 50 | 91.5 | 93.1 | 95.9 | 74.0 | 74.8 | 17.79 | 11.00 |
+| 2 | 25 | 171.6 | 196.1 | 198.8 | 154.2 | 164.2 | 18.10 | 5.83 |
+
+Reading it: the GPU chunk time is the bulk of the round trip, and the JSON/socket overhead is
+a fixed slice of it rather than a rounding error -- which is why the serving path is measured
+rather than assumed. Two clients do not run in parallel; they queue on the GPU.
 
 ## Ablation: what we tried first
 
@@ -298,11 +387,15 @@ Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 | `just setup-pretrained` | adds the optional backend (lerobot 0.6.1 + diffusers) outside the lock | ~1 min, ~2 GB |
 | `just doctor` | environment check: versions, CUDA, backend, checkpoint availability | seconds |
 | `just test` | ruff + mypy strict + CPU unit tests (what CI runs) | ~10 s |
+| `just smoke` | 20 steps of real training on CPU + resume equivalence (the CI smoke job) | ~5 s |
 | `just eval-e0` | the acceptance gate: 100 episodes, two samplers | ~50 min |
 | `just eval-e3` | DDIM step sweep, 300 episodes | ~25 min |
 | `just latency-ladder` | batch-1 latency ladder, 12 rows | ~15 min |
 | `just eval-e10` | latency injection + async chunking, 270 episodes | ~75 min |
 | `just bench-stack` | E14: published vs stock vs fast sampler, latency + episodes/hour | ~25 min |
+| `just bench-precision` | E8: fp32 vs bf16 vs fp16, latency ladder + 40 paired episodes each | ~20 min |
+| `just bench-serve` | load-test the HTTP boundary (client vs server latency) | ~2 min |
+| `just bench-paced steps=4` | wall-clock paced loop at one step count (12 episodes) | ~7 min |
 | `just demo` | render one episode to an annotated GIF (`results/figures/demo_rollout.gif`) | ~1 min |
 | `just report` | one-screen summary of everything measured so far | seconds |
 | `just serve` | serve the policy over local HTTP (`docs/05` section 4) | seconds to start |
@@ -320,7 +413,8 @@ the rest: `lint`, `types`, `format`, `hooks`, `test-local`, `data`, `memory`, `k
 1. `docs/04_eval_and_experiments.md` -- protocol, experiment matrix, claims with their
    "false if" conditions, and the dated deviations log (the honest part).
 2. `docs/05_inference_and_deployment.md` -- the latency ladder, the control loop, async
-   chunking, and why compile is NOT RUN.
+   chunking, and why the sampler had to lose its host-side scalars before compile or CUDA
+   graphs would apply at all.
 3. `docs/02_environment_setup.md` -- versions and the two-environment story for the backend
    (section 3.4).
 4. `docs/01_architecture.md` -- the policy interface, and why the substrate swap touched

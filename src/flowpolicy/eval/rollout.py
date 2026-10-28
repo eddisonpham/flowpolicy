@@ -35,6 +35,7 @@ def load_policy(
     *,
     scheduler: str = "ddim",
     sampler: str = "stock",
+    dtype: str = "float32",
 ) -> tuple[PolicyLike, dict[str, Any]]:
     """Load a trained checkpoint (`path/last.pt`) or an HF one (`hf:<repo_id>`).
 
@@ -46,7 +47,7 @@ def load_policy(
     if str(checkpoint).startswith("hf:"):
         hf_id = str(checkpoint).removeprefix("hf:")
         pretrained = PretrainedDiffusionPolicy(
-            hf_id, device=device, scheduler=scheduler, sampler=sampler
+            hf_id, device=device, scheduler=scheduler, sampler=sampler, dtype=dtype
         )
         pretrained.eval()
         return pretrained, {
@@ -59,6 +60,7 @@ def load_policy(
             "weights": "pretrained",
             "scheduler": scheduler,
             "sampler": sampler,
+            "dtype": dtype,
         }
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
     cfg = payload["config"]
@@ -178,9 +180,12 @@ def _init_worker(
     action_horizon: int,
     scheduler: str,
     sampler: str,
+    dtype: str,
 ) -> None:
     torch.set_num_threads(1)
-    policy, meta = load_policy(checkpoint, device=device, scheduler=scheduler, sampler=sampler)
+    policy, meta = load_policy(
+        checkpoint, device=device, scheduler=scheduler, sampler=sampler, dtype=dtype
+    )
     _WORKER.update(
         policy=policy, meta=meta, device=device, steps=sampler_steps, horizon=action_horizon
     )
@@ -214,6 +219,7 @@ def evaluate(
     use_ema: bool = True,
     scheduler: str = "ddim",
     sampler: str = "stock",
+    dtype: str = "float32",
 ) -> list[dict[str, Any]]:
     assert_seed_disjoint(train_seeds, eval_seeds)
     checkpoint = str(checkpoint)
@@ -226,7 +232,7 @@ def evaluate(
         max_workers=workers,
         mp_context=ctx,
         initializer=_init_worker,
-        initargs=(checkpoint, device, sampler_steps, action_horizon, scheduler, sampler),
+        initargs=(checkpoint, device, sampler_steps, action_horizon, scheduler, sampler, dtype),
     ) as pool:
         for part in pool.map(_run_episodes, [c for c in chunks if c]):
             results.extend(part)

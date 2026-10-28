@@ -5,9 +5,13 @@ fallback (D7): same Policy, env and logging interfaces.
 
 Latency is injected on the observation-to-action path as a delay in control
 ticks (`ceil(latency_ms / period_ms)`), which is what the docs ask for and is
-reproducible without sleeping. Inference time is measured for real on the GPU;
-the loop itself runs in virtual time (no wall-clock sleeps), which is recorded
-in every result row as `virtual_time=true`.
+reproducible without sleeping. Inference time is measured for real on the GPU.
+
+The loop runs in virtual time by default (no sleeps), which is what E10/E12
+measured and what every one of those rows records as `virtual_time=true`. With
+`paced=True` it really sleeps to the next tick, so an over-long chunk makes the
+loop fall behind on the wall clock; the per-tick lateness is then reported
+alongside the miss count (M9.6).
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from __future__ import annotations
 import math
 import time
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,12 +38,42 @@ class LoopConfig:
     max_steps: int = MAX_STEPS
     latency_ms: float = 0.0
     jitter_ms: float = 0.0
-    strategy: str = "naive"  # naive | temporal-ensemble
+    strategy: str = "naive"  # naive | temporal-ensemble | blend
+    # Only for strategy="blend": how many actions to cross-fade from the old chunk into the
+    # new one. 0 would be naive replacement.
+    blend_steps: int = 4
     # Replan every N control steps. 0 means replan only when the queued
     # predictions run out (action_horizon). Temporal ensembling needs N <
     # action_horizon so consecutive chunks overlap; otherwise every step is
     # covered by exactly one chunk and ensembling is identical to naive.
     replan_every: int = 0
+    # False = virtual time (no sleeps), which is what E10 and E12 measured. True = the loop
+    # really sleeps to the next tick, so a chunk that takes longer than the period makes the
+    # loop fall behind on the wall clock. M9.6 measures that because "deadline miss" in
+    # virtual time is a counter, not a consequence.
+    paced: bool = False
+
+
+def blend_chunks(
+    old: Sequence[np.ndarray], new: Sequence[np.ndarray], steps: int
+) -> list[np.ndarray]:
+    """Cross-fade the first `steps` actions of `new` with what was already queued.
+
+    The weight ramps 1/steps, 2/steps, ... so the first action still leans on the old chunk
+    and the last is pure new. Where the chunks agree this is a no-op; where they disagree it
+    spreads the correction over a few ticks instead of taking the jump that naive
+    replacement takes (E12's third arm, `docs/05` section 2).
+    """
+    blended = [np.asarray(action, dtype=np.float32) for action in new]
+    overlap = min(
+        int(steps),
+        len(blended),
+        len(old),
+    )
+    for i in range(overlap):
+        weight = (i + 1) / max(int(steps), 1)
+        blended[i] = (1.0 - weight) * np.asarray(old[i], dtype=np.float32) + weight * blended[i]
+    return blended
 
 
 def _obs_batch(
@@ -60,7 +95,7 @@ def run_episode(
     device: str = "cuda",
     rng: np.random.Generator | None = None,
 ) -> dict[str, Any]:
-    if cfg.strategy not in {"naive", "temporal-ensemble"}:
+    if cfg.strategy not in {"naive", "temporal-ensemble", "blend"}:
         raise ValueError(f"unknown chunk strategy {cfg.strategy!r}")
     rng = rng or np.random.default_rng(seed)
     # Same per-episode seeding as the eval harness: the chunk sampler must not
@@ -98,8 +133,10 @@ def run_episode(
         if device.startswith("cuda"):
             torch.cuda.synchronize()
         inference_ms: list[float] = []
+        lateness_ms: list[float] = []
         deadline_misses = 0
         steps = 0
+        tick_start = time.perf_counter()
         coverage = 0.0
         success = 0.0
         actions_returned = 0
@@ -130,6 +167,13 @@ def run_episode(
                         key = steps + i
                         ensemble_sums[key] = ensemble_sums.get(key, np.zeros_like(value)) + value
                         ensemble_counts[key] = ensemble_counts.get(key, 0) + 1
+                elif cfg.strategy == "blend":
+                    # E12's third arm. A model-level "inpainting" pass would condition the new
+                    # chunk's sampling on the actions already committed, which this borrowed
+                    # checkpoint cannot do (it is unconditional at inference). The achievable
+                    # version is a receding-horizon cross-fade, so a large disagreement costs
+                    # a smooth few steps rather than naive replacement's jump.
+                    queue = blend_chunks(queue, list(new), cfg.blend_steps)
                 else:
                     queue = list(new)
                 actions_returned += 1
@@ -144,6 +188,20 @@ def run_episode(
             obs, _reward, done, info = env.step(action)
             buffer.append(obs)
             steps += 1
+            if cfg.paced:
+                # The tick that should have started at tick_start + (steps-1) periods has
+                # already started; sleep only if there is time left. Lateness is recorded
+                # per tick, so a loop that never catches up shows up as a growing series
+                # rather than a single "miss" count.
+                # `steps` periods after the clock started, not `steps - 1`: the work of the
+                # first tick (planning the first chunk) is part of the first period, so a
+                # chunk that fits should not register as late.
+                target = tick_start + steps * cfg.period_ms / 1000.0
+                remaining = target - time.perf_counter()
+                if remaining > 0:
+                    time.sleep(remaining)
+                else:
+                    lateness_ms.append(-remaining * 1000.0)
             coverage = max(coverage, info["coverage"])
             success = max(success, info["success"])
             if done:
@@ -165,5 +223,11 @@ def run_episode(
         "delay_steps": delay,
         "period_ms": cfg.period_ms,
         "strategy": cfg.strategy,
-        "virtual_time": True,
+        "paced": cfg.paced,
+        "virtual_time": not cfg.paced,
+        "late_ticks": len(lateness_ms),
+        "lateness_mean_ms": float(np.mean(lateness_ms)) if lateness_ms else 0.0,
+        "lateness_p95_ms": float(np.percentile(lateness_ms, 95)) if lateness_ms else 0.0,
+        "lateness_max_ms": float(np.max(lateness_ms)) if lateness_ms else 0.0,
+        "wall_s": float(time.perf_counter() - tick_start),
     }

@@ -401,11 +401,22 @@ History: the 2026-10-18 run was five FAILs with one root cause, the driver (577.
 
 A later coding agent can check this document is done when:
 
-- [ ] Section 2 has real values from the owner's machine, no TBD left.
-- [ ] Section 3.1 has the Triton, MuJoCo, uv, Docker, and Nsight versions filled in from `pip show` or `--version`, and `uv.lock` is committed.
-- [ ] Every row in section 8 is PASS, or has a recorded fallback decision.
-- [ ] G1 output shows `torch 2.14.1`, CUDA 13.0, and an arch list that covers the GPU.
-- [ ] The "unverified" tags in section 3.1 are each either confirmed (tag changed to [V] with a source) or turned into an explicit risk in `10_risk_register.md`.
+- [x] Section 2 has real values from the owner's machine, no TBD left. Filled 2026-10-19
+  (driver 617.42, RTX 5060 Laptop, 8151 MiB, capability (12, 0)) and extended 2026-10-28 with
+  the optional backend versions.
+- [x] Section 3.1 has the Triton, MuJoCo, uv, Docker, and Nsight versions filled in from
+  `pip show` or `--version`, and `uv.lock` is committed. Triton, uv and torch are pinned and
+  locked; MuJoCo, Docker and Nsight have no entry because this host has none of them (G8/G9
+  NOT RUN, D1/D7), which is recorded in section 8 rather than left as a blank row.
+- [x] Every row in section 8 is PASS, or has a recorded fallback decision. G6, G8 and G9a-G9c
+  are NOT RUN with their fallbacks named (D6, D1, D7).
+- [x] G1 output shows `torch 2.14.1`, CUDA 13.0, and an arch list that covers the GPU. Verified
+  2026-10-19 after the driver update; see the G1 row in section 8.
+- [x] The "unverified" tags in section 3.1 are each either confirmed (tag changed to [V] with a
+  source) or turned into an explicit risk in `docs/06` section 2 (the file this line used to
+  name, `10_risk_register.md`, never existed; risks live in 06). The remaining `[U]` items are
+  listed under "Not verified in Stage 1" below with the reason each is not on the critical
+  path.
 
 ## 10. Verified references (access date 2026-10-18 for all)
 
@@ -440,7 +451,15 @@ Not verified in Stage 1: exact Triton pin for torch 2.14.1; latest MuJoCo releas
 
 ## 11. Next actions
 
-- [ ] Owner: fill sections 2 and 8; paste failures verbatim.
-- [ ] Agent: resolve every item under "Not verified in Stage 1" above, one at a time, upgrading tags.
-- [ ] Agent: turn section 4 pitfalls into entries in `10_risk_register.md`.
-- [ ] Agent (Stage 2): ADR-007 (deployment layer) and ADR-001/002 (benchmarks, robomimic scope) from the evidence here.
+- [x] Owner: fill sections 2 and 8; paste failures verbatim. Done 2026-10-18/19.
+- [ ] Agent: resolve every item under "Not verified in Stage 1" above, one at a time, upgrading
+  tags. Partly done: the uv index syntax, the Triton pin and the torch/CUDA pair are verified
+  (2026-10-18/19). Still open by choice: latest MuJoCo release, Container Toolkit steps, Nsight
+  versions, robomimic dataset repo names, robosuite on Python 3.12, the `osrf/ros:jazzy-desktop`
+  tag -- every one of them belongs to a component this host does not have (D1, D6, D7), so none
+  is on the critical path. This box stays open because claiming otherwise would mean verifying
+  tools the project no longer uses.
+- [x] Agent: turn section 4 pitfalls into entries in `docs/06` section 2. Done: pitfalls 1-3 are
+  R1, R2/R3 and R13/R14; the file name in the old line never existed.
+- [x] Agent (Stage 2): ADR-007 (deployment layer) and ADR-001/002 (benchmarks, robomimic scope)
+  from the evidence here. Done 2026-10-19 as D7, D1 and D2 in `docs/06`.

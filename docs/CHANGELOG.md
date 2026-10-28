@@ -222,3 +222,65 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   than averaged away, and stated as a resolution limit: 20 episodes cannot certify a 1e-5 action
   difference, so the sampler is justified by the arithmetic test plus the E0 gate, not by
   counting successes.
+
+## 2026-10-28: M9 hardening (docs reconciled, CI smoke job, E8, E3 replication, serving load, pacing, blend)
+
+- **The docs were reconciled with `results/` before anything new was measured.** Three claims
+  still described the pre-2026-10-28 state: the E9 claim row said `torch.compile` was NOT RUN,
+  the README read-me said the same, and `docs/00` advertised a matrix of E0-E12 while E14
+  existed. All three fixed, E14 gained its own matrix row, and twelve acceptance boxes across
+  docs/00-03 were either ticked with dated evidence or annotated as unmet with the reason (the
+  Diffusion Policy recipe is still `[S]`-sourced; the "fresh agent can run M0/M1" check needs a
+  clean-clone dry run that has not been done). Two references to a `10_risk_register.md` that
+  never existed now point at `docs/06` section 2.
+- **CI `smoke` job, promised by docs/01 section 4 since 2026-10-18 and deferred "until a model
+  exists".** `tests/integration/test_train_smoke.py` trains 20 steps on synthetic data, asserts
+  the loss falls by at least 5 %, and asserts an interrupted-and-resumed run matches an
+  uninterrupted one at `rtol=1e-5`. New `smoke` pytest marker, `just smoke` recipe (~5 s on
+  CPU), and a CI job that runs it. This closes a recorded deviation rather than adding a claim.
+- **E8: precision, on the pretrained checkpoint (`results/precision.jsonl`,
+  `results/tables/e8_precision.md`).** bf16/fp16 cut a chunk from 78.1 to 65.6 ms eager (73.4
+  to 55.6 ms with a CUDA graph) at N=4, and from 209.0 to 152.3 ms eager (194.4 to 138.4 ms
+  graph) at N=10, while peak VRAM falls from 1189 to 710 MiB. **The envelope does not move:** the
+  best half-precision N=10 row is 136.7 ms, still 1.4x over a 100 ms period, so fewer sampler
+  steps remain the only knob. On 40 paired episodes per dtype: success 35.0 % fp32 [22.5, 50.0],
+  50.0 % bf16 [35.0, 65.0], 45.0 % fp16 [30.0, 60.0], coverage 0.900 / 0.885 / 0.901 -- a
+  no-gross-regression result, not an equality proof (40 episodes cannot resolve the 2 pp the
+  hypothesis named). Implementation: `--dtype` threaded through adapter and runners, allowed
+  only on the fast sampler, and the sinusoidal timestep embedding kept in fp32 with its output
+  cast at the module boundary (the unet raises a dtype mismatch otherwise).
+- **E3 replication on an independent 50-episode block (`results/e3_replication.jsonl`).**
+  Coverage replicated (0.761 / 0.897 / 0.902 / 0.896 at N=2/4/8/10 against 0.716 / 0.885 / 0.919
+  / 0.888); success did not (24/38/48/40 % against 20/42/60/54 %, every pair overlapping). The
+  plateau and the two-step collapse are properties of the policy; the "N=8 is best" ordering
+  was episode noise, and now that is measured twice instead of asserted.
+- **The serving boundary is load-tested (`scripts/bench_serve.py`, `results/serve.jsonl`).**
+  One client: 91.5 ms p50 client round trip against 74.0 ms server-side chunk time, i.e. 17.8 ms
+  of JSON/socket per request and 11 requests/s. Two clients: 171.6 ms p50, because
+  `ThreadingHTTPServer` accepts both and they serialize on one GPU. A cold server pays 655 ms
+  on its first request; the script warms up before timing, like the latency protocol.
+- **The control loop has a wall-clock paced mode (`--paced`, `results/paced.jsonl`).** At N=4
+  the loop holds the 100 ms period (0.2 late ticks per episode; 2 of 12 episodes slipped once,
+  mean lateness 1.1 ms). At N=10 it is late on every episode (52.5 late ticks, 65.8 ms mean
+  lateness, p95 102.9 ms): once a chunk overruns, the lateness is a floor it carries rather than
+  a spike it recovers from. Pacing also puts the miss into the outcome rather than only the
+  counter -- success 3/12 at N=10 against 10/12 at N=4, coverage unchanged -- directionally,
+  since twelve episodes leave the intervals just overlapping.
+  The first tick's offset was fixed before the measurement (`steps * period`, not
+  `(steps - 1) * period`), precisely so the reported lateness is the loop's, not the clock's.
+- **E12's third strategy exists and is named honestly (`--strategy blend`).** Model-level
+  "inpainting" needs a policy conditioned on committed actions, which this checkpoint is not, so
+  the arm is a receding-horizon cross-fade over the first four queued actions. Measured at a
+  2-step replan rate: coverage 0.875 / 0.864 at 100/200 ms (naive replacement 0.749 / 0.553),
+  success 26.7 % / 10.0 % (ensembling 53.3 % / 43.3 %). Smoothing the splice helps coverage but
+  not success, so the pre-registered "inpainting-style is best" hypothesis is refuted for this
+  implementation and ensembling stays the requirement.
+- **A real bug the new load test surfaced, fixed.** `do_POST` answered 404 for an unknown path
+  without reading the request body; under HTTP/1.1 keep-alive the leftover body was then parsed
+  as the next request line, so a client posting to the wrong path could see a connection reset
+  instead of the documented 404. The body is now always read and discarded before the path
+  check. `test_unknown_path_is_404` had been failing intermittently in the full suite (about
+  one run in two) and now passes three consecutive suite runs.
+- Tests: 57 CPU unit tests (from 49) -- blend arithmetic, `resolve_dtype`, the E8 headline row,
+  and the report tests rewritten to look rows up by experiment instead of by position. `just
+  lint`, `just types`, `just test` and `just smoke` green; tables and README regenerate.

@@ -30,6 +30,27 @@ from flowpolicy.models.fast_sampler import DDIMCoefficients, ddim_coefficients, 
 
 DEFAULT_HF_ID = "lerobot/diffusion_pusht"
 
+# E8 (docs/04 section 2): the checkpoint is fp32, so mixed precision is a *choice* with a
+# correctness risk, not a free win. Names are accepted in both spellings so a runner flag
+# and a docs table can use whichever reads better.
+DTYPE_NAMES: dict[str, torch.dtype] = {
+    "float32": torch.float32,
+    "fp32": torch.float32,
+    "bfloat16": torch.bfloat16,
+    "bf16": torch.bfloat16,
+    "float16": torch.float16,
+    "fp16": torch.float16,
+}
+
+
+def resolve_dtype(name: str) -> torch.dtype:
+    """Map a CLI/docs name to a `torch.dtype`, or say what is allowed."""
+    try:
+        return DTYPE_NAMES[name]
+    except KeyError as exc:
+        raise ValueError(f"unknown dtype {name!r}; choose from {sorted(DTYPE_NAMES)}") from exc
+
+
 # `lerobot` 0.6.1 requires torch < 2.12 and this project pins torch 2.14.1. The import
 # happens lazily so that the rest of the package (eval of trained checkpoints, tests,
 # CI) does not depend on the optional backend being installed.
@@ -114,6 +135,7 @@ class PretrainedDiffusionPolicy(nn.Module):
         device: str = "cuda",
         scheduler: str = "ddim",
         sampler: str = "stock",
+        dtype: str = "float32",
         pretrained_step: int = 175_000,
     ) -> None:
         super().__init__()
@@ -132,6 +154,15 @@ class PretrainedDiffusionPolicy(nn.Module):
         if sampler == "fast" and scheduler != "ddim":
             raise ValueError("the fast sampler implements DDIM only (eta=0); use scheduler='ddim'")
         self.sampler = sampler
+        self.torch_dtype = resolve_dtype(dtype)
+        # The stock loop hands the tensors to `diffusers`, whose scheduler does host-side
+        # scalar math on fp32 schedule tensors; casting it is not something this repo has
+        # verified, so half precision is offered only on the path we own (docs/04 E8).
+        if self.torch_dtype != torch.float32 and sampler != "fast":
+            raise ValueError(
+                "mixed-precision inference is implemented for sampler='fast' only; "
+                "the stock lerobot/diffusers loop is fp32 (docs/04 E8)"
+            )
         self._coeff_cache: dict[int, DDIMCoefficients] = {}
 
         stats = load_normalization(hf_id)
@@ -150,8 +181,28 @@ class PretrainedDiffusionPolicy(nn.Module):
         self.register_buffer("action_high", stats["action_high"].float())
 
         # `self.to` rather than `self.policy.to`: the normalization buffers are this
-        # module's, and they have to travel with the network.
+        # module's, and they have to travel with the network. Device only -- the
+        # normalization statistics stay fp32 so half precision does not also move the
+        # input/output scaling.
         self.to(device)
+        if self.torch_dtype != torch.float32:
+            self.policy.to(dtype=self.torch_dtype)
+            # The sinusoidal timestep embedding constructs its own fp32 tensor
+            # (`torch.arange(...)` inside `SinusoidalPosEmb`), so casting the network leaves
+            # one fp32 producer feeding a half-precision linear and the unet raises
+            # "mat1 and mat2 must have the same dtype". Keep that encoder in fp32 -- it is
+            # a 320-wide MLP, so its cost is noise -- and cast its output where it enters
+            # the rest of the network.
+            encoder = self.policy.diffusion.unet.diffusion_step_encoder
+            encoder.to(dtype=torch.float32)
+            target = self.torch_dtype
+
+            def _cast_step_embedding(
+                _module: nn.Module, _inputs: tuple[Tensor, ...], output: Tensor
+            ) -> Tensor:
+                return output.to(target)
+
+            encoder.register_forward_hook(_cast_step_embedding)
         if scheduler == "ddim":
             base = self.policy.diffusion.noise_scheduler
             self.policy.diffusion.noise_scheduler = DDIMScheduler(
@@ -179,7 +230,7 @@ class PretrainedDiffusionPolicy(nn.Module):
                 int(cfg.num_train_timesteps),
                 steps,
                 device=next(diffusion.unet.parameters()).device,
-                dtype=torch.float32,
+                dtype=self.torch_dtype,
                 set_alpha_to_one=bool(cfg.set_alpha_to_one),
             )
             self._coeff_cache[steps] = cached
@@ -196,6 +247,8 @@ class PretrainedDiffusionPolicy(nn.Module):
 
     def _fast_chunk(self, image: Tensor, state: Tensor, steps: int, noise: Tensor | None) -> Tensor:
         diffusion = self.policy.diffusion
+        image = image.to(self.torch_dtype)
+        state = state.to(self.torch_dtype)
         batch = {
             "observation.state": state,
             "observation.images": image.unsqueeze(2),  # (B, To, 1 camera, C, H, W)
@@ -209,6 +262,10 @@ class PretrainedDiffusionPolicy(nn.Module):
                 device=image.device,
                 dtype=image.dtype,
             )
+        else:
+            # The latency protocol passes a static fp32 buffer so CUDA graph capture never
+            # touches the RNG; casting it here keeps the sampler dtype-pure.
+            noise = noise.to(image.device, self.torch_dtype)
         coeffs = self._coefficients(steps)
 
         def predict_epsilon(sample: Tensor, timesteps: Tensor) -> Tensor:
@@ -224,7 +281,9 @@ class PretrainedDiffusionPolicy(nn.Module):
             clip_range=float(diffusion.noise_scheduler.config.clip_sample_range),
         )
         start = self.obs_horizon - 1
-        return sample[:, start : start + self.action_horizon]
+        # Back to fp32 before de-normalization: the output is in environment pixels and the
+        # statistics were fitted in fp32, so the last step should not lose mantissa bits.
+        return sample[:, start : start + self.action_horizon].float()
 
     @torch.no_grad()
     def predict_chunk(

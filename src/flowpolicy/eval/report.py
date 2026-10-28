@@ -27,6 +27,9 @@ RESULT_FILES: dict[str, Path] = {
     "e9": Path("results/latency.jsonl"),
     "e10": Path("results/deploy.jsonl"),
     "e14": Path("results/stack.jsonl"),
+    "e8": Path("results/precision.jsonl"),
+    "e3_replication": Path("results/e3_replication.jsonl"),
+    "serve": Path("results/serve.jsonl"),
     "ablation_e1": Path("results/ablation/e1.jsonl"),
     "ablation_e3": Path("results/ablation/e3.jsonl"),
     "ablation_e9": Path("results/ablation/latency.jsonl"),
@@ -156,6 +159,57 @@ def headline_rows(results: Mapping[str, list[Row]]) -> list[tuple[str, str, str]
                 "What does one chunk cost at batch 1?",
                 "not measured yet (`just latency-ladder`)",
                 "E9",
+            )
+        )
+
+    precision = results.get("e8", [])
+    precision_latency = [r for r in precision if r.get("kind") == "latency"]
+    if precision_latency:
+
+        def cheapest(dtypes: tuple[str, ...], steps: int) -> Row | None:
+            rows = [
+                r for r in precision_latency if r.get("steps") == steps and r.get("dtype") in dtypes
+            ]
+            return min(rows, key=lambda r: float(r["mean_ms"])) if rows else None
+
+        fp32_4 = cheapest(("float32",), 4)
+        half_4 = cheapest(("bfloat16", "float16"), 4)
+        fp32_10 = cheapest(("float32",), 10)
+        half_10 = cheapest(("bfloat16", "float16"), 10)
+        if fp32_4 and half_4 and fp32_10 and half_10:
+            episodes = {r["dtype"]: r for r in precision if r.get("kind") == "episode"}
+            quality = ""
+            if len(episodes) >= 2:
+                quality = (
+                    ". On paired episodes "
+                    + ", ".join(
+                        f"{dtype} {float(row['success_rate']):.0%} "
+                        f"[{float(row['success_lo']):.0%}, {float(row['success_hi']):.0%}]"
+                        for dtype, row in sorted(episodes.items())
+                    )
+                    + " -- overlapping, so no gross regression rather than equality"
+                )
+            out.append(
+                (
+                    "Does half precision buy a control period?",
+                    f"No. The best half-precision configuration "
+                    f"({half_4['dtype']}, {half_4['mode']}) cuts a chunk to "
+                    f"{float(half_4['mean_ms']):.1f} ms at N=4 from "
+                    f"{float(fp32_4['mean_ms']):.1f} ms in fp32 "
+                    f"({float(fp32_4['mean_ms']) / float(half_4['mean_ms']):.2f}x) and to "
+                    f"{float(half_10['mean_ms']):.1f} ms at N=10 from "
+                    f"{float(fp32_10['mean_ms']):.1f} ms "
+                    f"({float(fp32_10['mean_ms']) / float(half_10['mean_ms']):.2f}x), which is "
+                    "still over a 100 ms period: the deployable envelope stays N <= 4" + quality,
+                    "E8",
+                )
+            )
+    if not any(source == "E8" for _, _, source in out):
+        out.append(
+            (
+                "Does half precision buy a control period?",
+                "not measured yet (`just bench-precision`)",
+                "E8",
             )
         )
 

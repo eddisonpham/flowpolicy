@@ -56,6 +56,21 @@ in E14:
 | 10 | 190.5 ms | 181.0 ms | 1.05x |
 | 16 | 309.4 ms | 304.0 ms | 1.02x |
 
+**Precision (E8), measured 2026-10-28 on the same checkpoint.** Half precision is real but not
+decisive: the best bf16 row is 55.6 ms at N=4 against 73.4 ms in fp32 (1.32x, CUDA graph on
+both) and 138.4 ms against 194.4 ms at N=10 (1.41x), and peak VRAM drops from 1189 MiB to
+710 MiB. fp16 matches bf16 within noise. At N=10 the best half-precision row is still 1.4x
+over a 100 ms period, so precision does **not** move the deployment envelope -- only N does.
+On quality the three arms are indistinguishable over 40 paired episodes each (success 35.0 %
+fp32, 50.0 % bf16, 45.0 % fp16, intervals overlapping; coverage 0.900 / 0.885 / 0.901), which
+is a no-gross-regression result, not an equality proof: 40 episodes cannot resolve the 2 pp
+the pre-registered hypothesis named. Implementation notes that cost real debugging time:
+`--dtype` is threaded through the adapter and every runner, it is allowed only on the fast
+sampler (the stock `diffusers` loop does its arithmetic on host fp32 schedule tensors, which
+this repo has not verified under a cast), and lerobot's sinusoidal timestep embedding builds
+its own fp32 tensor, so it is kept in fp32 and its output is cast at the module boundary --
+without that hook the unet raises `mat1 and mat2 must have the same dtype`.
+
 The graph gain shrinks as the model gets bigger, which is the opposite of the ablation result
 (4.7x at N=10 on an 11 M model) and the honest conclusion of this section: **with a policy that
 is actually good, CUDA graphs are a few percent, not a multiple.** What remains true is that
@@ -72,6 +87,38 @@ Messages (keep simple): observation as `sensor_msgs/Image` plus `std_msgs/Float3
 Fixed-rate loop: a timer at the control rate; each tick pops the next action from a queue; if the queue is empty, hold the last action and log a deadline miss. Observability: per-tick timestamps, queue depth, deadline misses, inference time, written to JSONL; one latency histogram figure.
 
 Async chunking (E12): policy computes chunk k+1 while executing chunk k, triggered when remaining queued actions fall below a threshold. Strategies: (1) naive replace, (2) temporal ensembling with exponential weights, (3) inpainting-style blending where the already-committed actions condition the new chunk (the "real-time chunking" line of work; current literature not yet reviewed, [U], do a short survey at M7 and pick one primary plus naive as baseline).
+
+**Third strategy, implemented 2026-10-28 (M9.7) as a cross-fade, and named accordingly.**
+The library version of "inpainting-style" conditions the *sampler* on the actions already
+committed, which needs a policy that accepts action conditioning; this borrowed checkpoint is
+unconditional at inference, so there is no honest way to do that without retraining. What is
+implementable is a receding-horizon cross-fade: on every replan the queue keeps its length and
+the first `blend_steps` actions ramp from the old chunk into the new one (weights 1/k, 2/k, ...
+1), so a large disagreement between chunks costs a smooth few ticks instead of the jump that
+naive replacement takes. `LoopConfig(strategy="blend", blend_steps=4)`, `--strategy blend[-r2]`
+on the runner, arithmetic pinned by `tests/unit/test_blend_chunks.py`. It is reported as
+"blend", never as "inpainting", and the literature survey that would justify a stronger claim
+is still `[U]`.
+
+Measured 2026-10-28 (replan every 2 steps, 30 episodes per row, `results/deploy.jsonl`): the
+cross-fade holds coverage near the temporal-ensembling rows (0.875 at 100 ms, 0.864 at 200 ms,
+against naive replacement's 0.749 / 0.553) but does not recover success (26.7 % at 100 ms and
+10.0 % at 200 ms, against ensembling's 53.3 % / 43.3 %). Smoothing the splice therefore helps
+the policy reach the goal without converting, which is the useful separation: what buys
+success is averaging several overlapping chunks, not hiding the discontinuity between two.
+
+**Wall-clock pacing (M9.6).** E10/E12 run in virtual time: inference is timed for real, but
+the loop never sleeps, so "deadline miss" is a counter. `--paced` sleeps to the next tick and
+records, per tick, how far behind the wall clock the loop is (`late_ticks`, `lateness_mean_ms`,
+`lateness_p95_ms`, `lateness_max_ms`). This is the difference between "a chunk would have
+missed" and "the loop fell behind and stayed behind".
+
+Measured 2026-10-28, 12 episodes per step count, 100 ms period, no injected latency: at N=4
+the loop keeps time (0.2 late ticks per episode, mean lateness 1.1 ms) and at N=10 it does not
+(52.5 late ticks, late on every episode, 65.8 ms mean and 102.9 ms p95 lateness). Pacing also
+lets the miss reach the policy outcome -- 3/12 successes at N=10 against 10/12 at N=4, coverage
+unchanged -- which virtual time could not show; the intervals only just overlap at 12 episodes,
+so it is a direction, not a separated result (`results/tables/paced_loop.md`).
 
 Latency injection: wrapper delays observation delivery or action application by a configured mean plus jitter (0, 50, 100, 150, 200 ms; jitter distribution recorded). Disturbances: apply a pose perturbation to the object (PushT) or end-effector (robosuite) at a random step in a fixed window, with seeded magnitude.
 
@@ -113,10 +160,30 @@ plausible-looking actions:
 - `latency_ms` is measured in-process around `predict_chunk`, with a `torch.cuda.synchronize()`
   on both sides, so it is comparable to the E9 protocol rather than to a network round trip.
 
+Measured 2026-10-28 (`just bench-serve`, N=4, one process, `scripts/bench_serve.py` spawning
+the real `scripts/serve.py`):
+
+| Clients | Requests | Client p50 | Client p95 | Server p50 | HTTP overhead p50 | Req/s |
+|---|---|---|---|---|---|---|
+| 1 | 50 | 91.5 ms | 93.1 ms | 74.0 ms | 17.8 ms | 11.0 |
+| 2 | 25 | 171.6 ms | 196.1 ms | 154.2 ms | 18.1 ms | 5.8 |
+
+The first request to a freshly started server costs 655 ms (CUDA context and kernel load);
+the script sends three untimed warm-up requests before timing anything, the same rule the
+latency protocol uses.
+
+Two things follow. The **JSON/socket layer costs about 17 ms per request** -- roughly a quarter
+of the GPU time at this step count, not a rounding error, because the observation is 2 x 96 x
+96 x 3 integers and `json` spends that long turning it into text. And **two clients do not run
+in parallel**: the second client's p50 nearly doubles because `ThreadingHTTPServer` accepts
+both and they serialize on one GPU. Both are properties of the artifact a user runs rather
+than of the policy, which is why they are measured here.
+
 Honest limits: one process, one policy, no batching, no auth, no TLS, and no queue -- it is a
 serving boundary for measurement and for clients on the same machine, not a production
-scheduler. The test (`tests/unit/test_deploy_server.py`) runs the contract over a real socket
-with a stub policy on CPU, so it is in CI; the endpoint itself has never been load-tested.
+scheduler. The contract test (`tests/unit/test_deploy_server.py`) runs over a real socket with
+a stub policy on CPU, so it is in CI; the load numbers above are from one quiet run on this
+laptop, not a benchmark under contention.
 
 ## 4. Acceptance criteria
 
