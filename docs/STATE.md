@@ -2,12 +2,38 @@
 
 | Field | Value |
 |---|---|
-| Current milestone | M8 packaging, second pass after the D11 pivot (2026-10-27) |
-| Current step id | none (evals complete: E0, E3, E9, E10, E12) |
+| Current milestone | M8 packaging, third pass: measured value baseline (E14), 2026-10-28 |
+| Current step id | none (evals complete: E0, E3, E9, E10, E12, E14) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
-| Last completed step | M8.3-M8.5 (2026-10-27): pretrained adapter + E0 gate, E3/E9/E10/E12 on the pretrained checkpoint, generators, `just report`/`just serve`/`just doctor`, README and docs re-framed |
-| Evidence | `just test` green (2026-10-27: ruff, mypy strict on 23 files, 33 unit tests); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
+| Last completed step | M8.6 (2026-10-28): fast DDIM sampler + compile rows, E14 stack-value baseline, demo GIF, plain-language README, resume bullets |
+| Evidence | `just test` green (2026-10-28: ruff, ruff format, mypy strict on 26 files, 49 CPU unit tests; 13 GPU/integration tests run locally); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
+
+## What changed on 2026-10-28 (the compile gap closed, and the value baseline)
+
+The owner asked for two things the earlier packaging did not deliver: a **measured baseline**
+for the stack's own usefulness, and a plain answer to "what is this and why does it matter".
+Both are now in the repo; the second is a README section and `docs/RESUME.md`.
+
+- **Root cause behind the `torch.compile` failure, not just a workaround.** `diffusers` keeps
+  `alphas_cumprod` on the host and indexes it with a Python int per denoising step, so lerobot's
+  DDIM loop mixed ten host scalars into CUDA math per chunk. That both forced a host/device
+  synchronization per step and gave Inductor a CPU partition that wants MSVC. The 2026-10-27
+  note called this "an environment limitation"; it was a sampler-implementation problem.
+- `src/flowpolicy/models/fast_sampler.py` precomputes the DDIM coefficients on the sampling
+  device and runs the loop in tensor math only. Proven equal to `diffusers` at five step counts
+  and two beta schedules (`tests/unit/test_fast_sampler.py`, 9 tests), including the case where
+  it disagrees if a coefficient is applied twice -- a bug this file had on first draft and the
+  test caught.
+- **E14 (`results/stack.jsonl`) is the usefulness baseline.** Same checkpoint, same GPU, same
+  episodes, three ways to run it: the published configuration (DDPM@100), the stock
+  lerobot->diffusers DDIM path, and the fast sampler with CUDA graphs and `torch.compile`.
+  Latency rows plus throughput rows (s/episode, episodes/hour, success, coverage).
+- The adapter gained `sampler="stock"|"fast"`; every existing row keeps `stock`, so E0/E3/E10
+  remain comparable to what they were. `--sampler` is threaded through `evaluate`,
+  `deploy_eval` and `latency`; RNG and noise handling are unchanged.
+- `scripts/demo_rollout.py` (`just demo`) renders one episode to an annotated GIF so the
+  behaviour is visible, not only tabulated.
 
 ## What changed on 2026-10-27 (D11 pivot)
 
@@ -56,9 +82,10 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   (42-60 %). Latency 31.5 -> 726.7 ms under two-worker contention. `results/e3.jsonl`.
 - **E9 (latency ladder, batch 1, single process)**: eager 20.2 / 73.5 / 190.5 / 309.4 ms at
   N=1/4/10/16; CUDA graph 17.5 / 66.8 / 181.0 / 304.0 ms, i.e. 1.02-1.16x, against 4.7x on the
-  11 M ablation model. `torch.compile` is NOT RUN: `InvalidCxxCompiler: cl is not found`
-  (Inductor CPU codegen; the checkpoint's DDIM scheduler puts host tensors in the graph). E9
-  plus E3 fix the deployment envelope: only N <= 4 fits a 100 ms period.
+  11 M ablation model. These rows use the stock sampler. `torch.compile` now runs (2026-10-28)
+  on the fast sampler and is reported in E14: graph and compile are both worth roughly a tenth
+  here, because a 262.7 M-parameter U-Net at batch 1 is compute-bound. E9/E14 plus E3 fix the
+  deployment envelope: only N <= 4 fits a 100 ms period.
 - **E10 (270 episodes, injected observation latency 0-200 ms + 20 ms jitter)**: success
   56.7 % at 0 ms, 60.0 % at 50 ms, 56.7 % at 100 ms, 46.7 % at 150 ms, 43.3 % at 200 ms (all
   CIs overlapping); coverage flat at 0.897-0.932. Deadline misses 26-33 per episode at N=10,
@@ -69,6 +96,15 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   the chunk count. Separated, unlike the ablation's ambiguous version. It is also the fifth row
   of the computed headline summary, so `just report` and the README table carry it
   (`flowpolicy.eval.report` strips the runner's `-r2` suffix to pair the rows).
+- **E14 (2026-10-28) is the stack's own value baseline**, same checkpoint / GPU / episodes:
+  published DDPM@100 53.1 s per episode and 23.9 s of GPU time per 100 control steps; stock
+  DDIM@10 5.5 s and 2.65 s; fast-sampler DDIM@4 2.6 s and 1.19 s (20x cheaper than published),
+  with coverage 0.947 -> 0.961 and success 50 % -> 75 % on the same 4 episodes. Latency: 65.2 ms
+  (graph) / 65.6 ms (compile-reduce-overhead) / 72.4 ms (stock eager) at N=4; 160-183 ms at N=10,
+  so only N <= 4 fits a 100 ms period. Two rollout workers cost 1.8x per control step -- on this
+  policy parallelism is not a throughput win. Sampler equivalence: action chunks within 0.02 px
+  of the library's, but only 9/20 paired episodes agree on success (chaotic task, 20-episode
+  resolution), reported rather than hidden.
 - **Infrastructure added 2026-10-27 (no training involved)**: `flowpolicy.eval.report` (computed
   headline summary, used by `just report` and the README), `flowpolicy.deploy.server` +
   `scripts/serve.py` (`just serve`, stdlib-only HTTP serving boundary, contract in docs/05
@@ -94,7 +130,11 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   harness to an external published number, which is the stronger check.
 - E10 runs the loop in virtual time (no wall-clock pacing); inference is timed for real and
   deadline misses are logged.
-- Demo video not recorded (no capture path on this host); docs/00 marks it missing.
+- The demo is a 55-frame GIF of one episode (`results/figures/demo_rollout.gif`, `just demo`),
+  not a narrated video.
+- E14's per-arm episode count is small (4 for the cost arms, 20 for the equivalence check), so
+  its success columns are indicative; the cost columns are per control step and do not depend on
+  episode length.
 - E2, E4-E8, E11 not run; robomimic, ROS 2, Docker and the CUDA C++ extension are out of
   scope on this host (D1, D6, D7). The Triton kernel stays an ablation result.
 
@@ -115,3 +155,4 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
 - 2026-10-24: three training seeds at the 12000-step budget; DDPM sampling-ladder bug found and fixed; E1/E3 re-evaluated.
 - 2026-10-27: owner asked what the verdict on the project was; answer: process strong, scientific content weak (null on success, floored signal).
 - 2026-10-27: owner asked to do a 180 -- use a model that is already good and work on the software infrastructure. Decisions taken with the owner: (1) wrap the `lerobot` package rather than reimplement the model, (2) full re-frame: adapter, validation, re-run E3/E9/E10, rewrite README and docs 00-07, (3) keep the from-scratch work as a documented ablation and delete the unrun E13 scaffolding.
+- 2026-10-28: owner asked to fix the outstanding issues, produce a measured usefulness baseline, and explain the software in plain terms plus XYZ resume bullets. Scope taken: close the compile gap at its cause, add E14 as the baseline, render a demo artifact, and write the explanation down (`README.md` top section, `docs/RESUME.md`) rather than only in chat.

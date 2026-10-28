@@ -67,6 +67,15 @@ train-e1:
 memory:
     uv run python scripts/bench_memory.py
 
+# E14: the same checkpoint run the published way, the stock way and our way.
+# Latency ladder + real episodes/hour, with success and coverage on every arm.
+bench-stack episodes="4":
+    uv run python scripts/bench_stack.py --episodes {{episodes}}
+
+# Render one episode to an annotated GIF (packaging, not a measurement).
+demo steps="4" seed="10000":
+    uv run python scripts/demo_rollout.py --steps {{steps}} --seed {{seed}} --stride 1
+
 # E9 latency rows on the pretrained checkpoint: mode and N are passed as arguments.
 latency mode="eager" steps="10":
     uv run python scripts/latency.py --ckpt hf:lerobot/diffusion_pusht --mode {{mode}} --steps {{steps}} --config-id e9_{{mode}}_n{{steps}}

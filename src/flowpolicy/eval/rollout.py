@@ -34,15 +34,20 @@ def load_policy(
     use_ema: bool = True,
     *,
     scheduler: str = "ddim",
+    sampler: str = "stock",
 ) -> tuple[PolicyLike, dict[str, Any]]:
     """Load a trained checkpoint (`path/last.pt`) or an HF one (`hf:<repo_id>`).
 
     Pretrained rows carry `train_seed = -1`: there is no training seed to resample, so
-    their intervals are episode-level (docs/04 section 1).
+    their intervals are episode-level (docs/04 section 1). `sampler` selects the DDIM loop
+    for the pretrained path ("stock" = lerobot's, "fast" = ours, which compiles and
+    captures); it has no effect on trained checkpoints.
     """
     if str(checkpoint).startswith("hf:"):
         hf_id = str(checkpoint).removeprefix("hf:")
-        pretrained = PretrainedDiffusionPolicy(hf_id, device=device, scheduler=scheduler)
+        pretrained = PretrainedDiffusionPolicy(
+            hf_id, device=device, scheduler=scheduler, sampler=sampler
+        )
         pretrained.eval()
         return pretrained, {
             "policy": "pretrained-dp",
@@ -53,6 +58,7 @@ def load_policy(
             "params": pretrained.num_parameters(),
             "weights": "pretrained",
             "scheduler": scheduler,
+            "sampler": sampler,
         }
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
     cfg = payload["config"]
@@ -113,6 +119,7 @@ def rollout_episode(
         torch.cuda.manual_seed_all(env_seed)
     obs_horizon = policy.obs_horizon
     env = PushTEnv()
+    wall_start = time.perf_counter()
     try:
         obs = env.reset(seed=env_seed)
         frames = deque([obs["image"]] * obs_horizon, maxlen=obs_horizon)
@@ -146,6 +153,7 @@ def rollout_episode(
                 break
     finally:
         env.close()
+    wall_s = time.perf_counter() - wall_start
     lat = np.asarray(latencies) if latencies else np.zeros(1)
     return {
         "success": success,
@@ -153,6 +161,10 @@ def rollout_episode(
         "steps": float(steps),
         "latency_mean_ms": float(lat.mean()),
         "latency_p95_ms": float(np.percentile(lat, 95)),
+        # Wall-clock for the episode body (reset -> done), excluding checkpoint load and
+        # worker start-up. This is what `scripts/bench_stack.py` converts to episodes/hour.
+        "wall_s": float(wall_s),
+        "chunks": float(len(latencies)),
     }
 
 
@@ -160,10 +172,15 @@ _WORKER: dict[str, Any] = {}
 
 
 def _init_worker(
-    checkpoint: str, device: str, sampler_steps: int, action_horizon: int, scheduler: str
+    checkpoint: str,
+    device: str,
+    sampler_steps: int,
+    action_horizon: int,
+    scheduler: str,
+    sampler: str,
 ) -> None:
     torch.set_num_threads(1)
-    policy, meta = load_policy(checkpoint, device=device, scheduler=scheduler)
+    policy, meta = load_policy(checkpoint, device=device, scheduler=scheduler, sampler=sampler)
     _WORKER.update(
         policy=policy, meta=meta, device=device, steps=sampler_steps, horizon=action_horizon
     )
@@ -196,6 +213,7 @@ def evaluate(
     device: str = "cuda",
     use_ema: bool = True,
     scheduler: str = "ddim",
+    sampler: str = "stock",
 ) -> list[dict[str, Any]]:
     assert_seed_disjoint(train_seeds, eval_seeds)
     checkpoint = str(checkpoint)
@@ -208,7 +226,7 @@ def evaluate(
         max_workers=workers,
         mp_context=ctx,
         initializer=_init_worker,
-        initargs=(checkpoint, device, sampler_steps, action_horizon, scheduler),
+        initargs=(checkpoint, device, sampler_steps, action_horizon, scheduler, sampler),
     ) as pool:
         for part in pool.map(_run_episodes, [c for c in chunks if c]):
             results.extend(part)

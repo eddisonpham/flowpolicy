@@ -83,15 +83,21 @@ def _checkpoint() -> str:
 
 
 def _gpu_toolchain() -> str:
-    """Not required for the eval path, but it is why `torch.compile` is NOT RUN."""
+    """Optional since 2026-10-28: only the *stock* sampler needs MSVC.
+
+    `lerobot` -> `diffusers` keeps DDIM's schedule on the host, so compiling that path wants a
+    C++ compiler for the CPU partition. Our fast sampler (`--sampler fast`) has no such
+    partition and compiles without MSVC, which is why this check is informational rather than
+    required (docs/05 section 1).
+    """
     if importlib.util.find_spec("torch") is None:
         raise RuntimeError("torch missing")
     try:
         subprocess.run(["cl"], shell=True, capture_output=True, check=True, timeout=20)
     except Exception as exc:
         raise RuntimeError(
-            "MSVC cl.exe not found: torch.compile cannot codegen a CPU partition "
-            f"(docs/05 section 1) [{type(exc).__name__}]"
+            "MSVC cl.exe not found: only the stock sampler's compile path needs it; "
+            f"`--sampler fast` does not (docs/05 section 1) [{type(exc).__name__}]"
         ) from exc
     return "cl.exe present"
 
@@ -108,7 +114,7 @@ def main() -> None:
         ("pretrained backend", _backend),
         ("checkpoint", _checkpoint),
         ("dataset (ablation)", _data),
-        ("MSVC (compile)", _gpu_toolchain),
+        ("MSVC (stock-sampler compile, optional)", _gpu_toolchain),
     ]
     failed = False
     for name, fn in checks:
@@ -122,7 +128,8 @@ def main() -> None:
         print(f"[{status:>7s}] {label}: {detail}")
     print("\nEval path needs: python, torch + cuda, simulator, checkpoint.")
     print(
-        "Ablation training also needs: lockfile, dataset. Compile needs MSVC (docs/05 section 1)."
+        "Ablation training also needs: lockfile, dataset. Compiling the stock sampler needs "
+        "MSVC; the fast sampler does not (docs/05 section 1)."
     )
     raise SystemExit(1 if failed else 0)
 

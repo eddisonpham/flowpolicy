@@ -177,3 +177,48 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   The ratios quoted in the docs were re-checked against `results/latency.jsonl`: 1.02-1.15x for
   CUDA graphs on the pretrained policy against 4.7x for the same comparison on the 11 M
   ablation model, where `torch.compile` was 5.8x faster than eager.
+
+## 2026-10-28: compile gap closed at its cause, E14 usefulness baseline, demo, resume notes
+
+- **`torch.compile` on the pretrained policy went from NOT RUN to measured, and the earlier
+  diagnosis was wrong in an instructive way.** The 2026-10-27 entry blamed the host (no MSVC).
+  The blocker was `diffusers` keeping `alphas_cumprod` on the CPU and indexing it with a Python
+  int per step: lerobot's DDIM loop therefore mixed ten host scalars into CUDA math per chunk,
+  which costs a host/device synchronization per step *and* gives Inductor a CPU partition that
+  needs a C++ compiler. `src/flowpolicy/models/fast_sampler.py` precomputes the DDIM
+  coefficients on the sampling device and runs the loop in tensor math only. Equality with
+  `diffusers` is a test, not a claim: `tests/unit/test_fast_sampler.py` (9 tests) covers five
+  step counts, two beta schedules, the timestep grid and the coefficient layout. The first draft
+  applied `sqrt(1-a)/sqrt(a)` after multiplying by `1/sqrt(a)` as well; the test caught it.
+- **E14 (`scripts/bench_stack.py`, `results/stack.jsonl`, `results/tables/e14_stack.md`)** is the
+  baseline the earlier packaging lacked. Same checkpoint, same GPU, same episodes, three ways to
+  run it: the published configuration (DDPM@100), the stock lerobot->diffusers DDIM path, and
+  the fast sampler with CUDA graphs and `torch.compile`. Latency rows report per-chunk cost,
+  control rate and the share of a 100 ms period; throughput rows report seconds per episode and
+  episodes/hour with success and coverage attached, so the cheap arms cannot be quietly worse
+  policies. `results/figures/e14_stack_throughput.png` puts the ratio on a log axis.
+- **What the numbers say** (see the table for values): the published configuration costs seconds
+  per chunk and an episode takes minutes; the step-count dial buys two orders of magnitude in
+  experiment cost at a coverage cost that E3 already quantified; graphs and compile are worth
+  roughly a tenth each because the 262.7 M-parameter network is compute-bound, so launch
+  overhead is not where a 100 ms period is won or lost. That last point contradicts the
+  from-scratch ablation's 4.7x/5.8x and is reported as the reversal it is.
+- `PretrainedDiffusionPolicy` gained `sampler="stock"|"fast"` (default `stock`, so every earlier
+  row stays comparable); `--sampler` is threaded through `evaluate`, `deploy_eval`, `latency` and
+  `bench_stack`. `rollout_episode` now records `wall_s` and `chunks` per episode, which is what
+  the throughput arms aggregate.
+- **A demo artifact exists**: `scripts/demo_rollout.py` (`just demo`) records a real rollout to
+  `results/figures/demo_rollout.gif`, with step, coverage, queue depth, measured chunk latency
+  and deadline misses drawn on the frame. This closes the "no capture path on this host" item
+  from M8 in docs/00 and docs/07.
+- **Plain-language docs**: the README now opens with what the software is, a component table and
+  a stack table, then "what it buys you" before the experiment sections; `docs/RESUME.md` holds
+  XYZ-format bullets. `scripts/doctor.py` treats MSVC as optional and says why.
+- **The sampler swap was checked on episodes, and it does not fully agree.** Action chunks from
+  the fast and stock loops differ by at most 0.02 px on the 512 px action space (fp32 summation
+  order), pinned by `tests/gpu/test_pretrained_sampler_equivalence.py`. On 20 paired episodes in
+  a contact-rich simulator that rounding is enough to move outcomes: 70 % vs 55 % success and
+  9/20 episodes agreeing, coverage 0.905 vs 0.856. Reported in E14's equivalence block rather
+  than averaged away, and stated as a resolution limit: 20 episodes cannot certify a 1e-5 action
+  difference, so the sampler is justified by the arithmetic test plus the E0 gate, not by
+  counting successes.

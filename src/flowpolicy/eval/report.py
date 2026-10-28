@@ -26,6 +26,7 @@ RESULT_FILES: dict[str, Path] = {
     "e3": Path("results/e3.jsonl"),
     "e9": Path("results/latency.jsonl"),
     "e10": Path("results/deploy.jsonl"),
+    "e14": Path("results/stack.jsonl"),
     "ablation_e1": Path("results/ablation/e1.jsonl"),
     "ablation_e3": Path("results/ablation/e3.jsonl"),
     "ablation_e9": Path("results/ablation/latency.jsonl"),
@@ -101,6 +102,16 @@ def headline_rows(results: Mapping[str, list[Row]]) -> list[tuple[str, str, str]
         out.append(("How few sampler steps still work?", "not measured yet (`just eval-e3`)", "E3"))
 
     latency = group_rows(results.get("e9", []), ["mode", "steps"])
+    stack_latency = {
+        (row.get("arm"), row.get("steps")): row
+        for row in results.get("e14", [])
+        if row.get("kind") == "latency"
+    }
+    compiled = [
+        (arm, float(row["mean_ms"]))
+        for (arm, steps), row in stack_latency.items()
+        if isinstance(arm, str) and arm.startswith("fast-compile") and steps == 4
+    ]
     if latency:
         parts = []
         for steps in (4, 10):
@@ -118,12 +129,24 @@ def headline_rows(results: Mapping[str, list[Row]]) -> list[tuple[str, str, str]
             if eager10 and graph10
             else "unmeasured"
         )
+        compile_note = ""
+        eager4 = latency.get(("eager", 4))
+        if compiled and eager4:
+            arm, ms = min(compiled, key=lambda kv: kv[1])
+            eager4_ms = _mean(eager4, "mean_ms")
+            compile_note = (
+                f". `torch.compile` runs on this repo's DDIM sampler ({arm.split('-')[-1]} mode): "
+                f"{ms:.1f} ms at N=4 against {eager4_ms:.1f} ms for the stock loop, i.e. "
+                f"{eager4_ms / ms:.2f}x -- so compile and graphs are worth a tenth, not the "
+                "4.7x/5.8x they were worth on the 11 M ablation model: at 262.7 M parameters "
+                "the network, not the launcher, is the cost"
+            )
         out.append(
             (
                 "What does one chunk cost at batch 1?",
                 "; ".join(parts)
-                + f". CUDA graphs are worth {gain} here, against 4.7x on the 11 M ablation model. "
-                "`torch.compile` is NOT RUN (no MSVC on this host)",
+                + f". CUDA graphs are worth {gain} here, against 4.7x on the 11 M ablation model"
+                + compile_note,
                 "E9",
             )
         )
@@ -198,6 +221,45 @@ def headline_rows(results: Mapping[str, list[Row]]) -> list[tuple[str, str, str]
                 "Does replanning four times faster break it?",
                 "not measured yet (`just eval-e10`)",
                 "E12",
+            )
+        )
+
+    throughput = {
+        row.get("arm"): row for row in results.get("e14", []) if row.get("kind") == "throughput"
+    }
+    published = throughput.get("published")
+    operating = throughput.get("fast-ddim4")
+    if published and operating:
+        slow = float(published["s_per_100_steps"])
+        fast = float(operating["s_per_100_steps"])
+        parallel = throughput.get("fast-ddim4-2w")
+        parallel_note = ""
+        if parallel:
+            parallel_note = (
+                f"; two rollout workers cost {float(parallel['s_per_100_steps']) / fast:.1f}x per "
+                "control step, because one process already saturates the GPU"
+                if float(parallel["s_per_100_steps"]) > fast
+                else f"; two rollout workers cut it to {float(parallel['s_per_100_steps']):.2f} s"
+            )
+        out.append(
+            (
+                "What does the stack buy over running the checkpoint as published?",
+                f"{slow:.1f} s of GPU time per 100 control steps as published (DDPM@100) versus "
+                f"{fast:.2f} s at the operating point this repo selects (DDIM N=4), i.e. "
+                f"{slow / fast:.0f}x cheaper, with success "
+                f"{float(published['success_rate']):.0%} -> {float(operating['success_rate']):.0%} "
+                f"and coverage {float(published['coverage_mean']):.3f} -> "
+                f"{float(operating['coverage_mean']):.3f} on the same {int(operating['episodes'])} "
+                f"episodes{parallel_note}",
+                "E14",
+            )
+        )
+    else:
+        out.append(
+            (
+                "What does the stack buy over running the checkpoint as published?",
+                "not measured yet (`just bench-stack`)",
+                "E14",
             )
         )
 

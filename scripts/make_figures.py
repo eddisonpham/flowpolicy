@@ -167,6 +167,43 @@ def e10_curve(rows: list[dict[str, Any]]) -> None:
         plt.close(fig)
 
 
+def stack_figure(rows: list[dict[str, Any]]) -> None:
+    """E14: experiments per hour, log scale -- the asset's whole argument in one picture.
+
+    The published configuration and the operating point this stack identifies differ by a
+    factor, not a percentage, so a linear axis would hide everything except the top bar.
+    """
+    arms = sorted(
+        (r for r in rows if r.get("kind") == "throughput"),
+        key=lambda r: float(r["episodes_per_hour"]),
+    )
+    if not arms:
+        return
+    labels = [
+        f"{a['arm']}\n{a['scheduler']}@{a['steps']}" + (" 2w" if a["workers"] > 1 else "")
+        for a in arms
+    ]
+    values = [float(a["episodes_per_hour"]) for a in arms]
+    colours = ["#c44e52" if a["arm"] == "published" else "#4c72b0" for a in arms]
+    fig, ax = plt.subplots(figsize=(6.4, 3.2))
+    bars = ax.barh(labels, values, color=colours)
+    ax.set_xscale("log")
+    ax.set_xlabel("episodes per hour (log scale), success/coverage printed on each bar")
+    for bar, arm in zip(bars, arms, strict=False):
+        ax.text(
+            bar.get_width() * 1.08,
+            bar.get_y() + bar.get_height() / 2,
+            f"{arm['success_rate']:.0%} / {arm['coverage_mean']:.3f}",
+            va="center",
+            fontsize=7,
+        )
+    ax.set_xlim(right=max(values) * 6)
+    ax.set_title("E14: same checkpoint, same episodes, three ways to run it")
+    fig.tight_layout()
+    fig.savefig(OUT / "e14_stack_throughput.png", dpi=150)
+    plt.close(fig)
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     e0 = read("e0.jsonl")
@@ -189,6 +226,10 @@ def main() -> None:
     if e10:
         e10_curve(e10)
         print("wrote e10 figures")
+    stack = read("stack.jsonl")
+    if stack:
+        stack_figure(stack)
+        print("wrote e14_stack_throughput.png")
 
 
 if __name__ == "__main__":

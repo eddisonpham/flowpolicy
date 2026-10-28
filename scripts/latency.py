@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +12,20 @@ import torch
 
 from flowpolicy.eval.latency import benchmark
 from flowpolicy.eval.rollout import load_policy
+
+
+def _warn_if_no_msvc() -> None:
+    """Inductor needs `cl.exe` only when a graph has a CPU partition.
+
+    The stock lerobot path has one (diffusers keeps `alphas_cumprod` on the host); the fast
+    sampler does not. Saying so up front beats a 40-line C++ traceback.
+    """
+    if shutil.which("cl") is None:
+        print(
+            "[latency] cl.exe is not on PATH; if this compile run fails with "
+            "InvalidCxxCompiler it needs MSVC (docs/05 section 1)",
+            flush=True,
+        )
 
 
 def main() -> None:
@@ -32,6 +47,12 @@ def main() -> None:
     parser.add_argument(
         "--scheduler", default="ddim", choices=["ddim", "ddpm"], help="pretrained only"
     )
+    parser.add_argument(
+        "--sampler",
+        default="stock",
+        choices=["stock", "fast"],
+        help="pretrained DDIM loop: lerobot's (stock) or ours (fast, compilable)",
+    )
     parser.add_argument("--warmup", type=int, default=50)
     parser.add_argument("--iters", type=int, default=200)
     parser.add_argument("--device", default="cuda")
@@ -40,8 +61,14 @@ def main() -> None:
     args = parser.parse_args()
 
     policy, meta = load_policy(
-        args.ckpt, device=args.device, use_ema=True, scheduler=args.scheduler
+        args.ckpt,
+        device=args.device,
+        use_ema=True,
+        scheduler=args.scheduler,
+        sampler=args.sampler,
     )
+    if args.mode.startswith("compile-"):
+        _warn_if_no_msvc()
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
     row = benchmark(

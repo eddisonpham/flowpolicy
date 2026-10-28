@@ -37,6 +37,8 @@ is one checkpoint on one simulated task.
 | Reproduced reference | E0: 64.0 % success (32/50, 95 % CI [52.0 %, 78.0 %]) and 0.924 mean coverage at DDIM N=10, against the model card's 65.4 % / 0.955 |
 | Environment | gym-pusht 0.1.8, 96x96, horizon 300 steps, success = max coverage >= 95 % |
 | Compute | one RTX 5060 Laptop (8 GB), torch 2.14.1+cu130, no training performed by this project for the served policy |
+| Samplers | stock (`lerobot` -> `diffusers`) and `fast` (this repo's DDIM loop: coefficients precomputed on-device, numerically equal, compilable and capturable) |
+| Serving cost, measured | E14: the published DDPM@100 configuration, the stock DDIM path and the fast sampler, as seconds per episode and episodes/hour with success and coverage attached |
 
 ### Metrics with intervals (the operating-relevant ones)
 
@@ -67,8 +69,10 @@ is one checkpoint on one simulated task.
   single idle process for the latency rows (the two differ by roughly 2x, stated per table).
 - E10's loop runs in virtual time; deadline misses are real (measured inference) but there is
   no wall-clock pacing or real-time scheduler.
-- `torch.compile` is NOT RUN on this host (no MSVC for Inductor's CPU codegen), so the
-  largest optimization class in the from-scratch ablation is unmeasured here.
+- `torch.compile` and CUDA graphs are measured on this repo's DDIM sampler (E14), not on the
+  stock one: the stock loop keeps the diffusion schedule on the host and cannot be compiled
+  here without MSVC. Both are worth about a tenth at this model size, so the gap does not
+  change any conclusion.
 - Simulation only; robomimic, ROS 2 and real hardware were out of scope (D1, D6, D7).
 
 ### Data

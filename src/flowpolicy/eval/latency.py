@@ -66,6 +66,9 @@ def benchmark(
         fn = lambda: policy.predict_chunk(obs, steps=steps, noise=noise)  # noqa: E731
     elif mode.startswith("compile-"):
         compile_mode = mode.removeprefix("compile-")
+        warm = getattr(policy, "warm", None)
+        if callable(warm):
+            warm(steps)
         target = torch.compile(
             lambda: policy.predict_chunk(obs, steps=steps, noise=noise),
             mode=compile_mode,

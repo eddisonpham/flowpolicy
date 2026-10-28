@@ -24,19 +24,30 @@ Order of work, each with before/after in `results/latency.jsonl`:
 6. Precision (E8): bf16 vs fp16; fp8/int8 only if the hardware path exists [U], and always report success-rate cost.
 7. Optional (D6): same kernel as CUDA C++ extension (gate G6 must pass first).
 
-**Compile modes are NOT RUN for the pretrained path (2026-10-27).** `torch.compile` fails with
-`InvalidCxxCompiler: Compiler: cl is not found`: the checkpoint's DDIM scheduler creates host
-timesteps inside the sampled function, Inductor sees a CPU partition and asks MSVC to codegen
-it. This host has no MSVC build tools, and the failure is reproducible outside this project
-(`torch.compile(lambda x: x * 2)` fails on a CPU tensor, works on a CUDA tensor), so it is an
-environment limitation rather than a property of the policy. `scripts/latency_ladder.sh` tries
-each mode, prints NOT RUN when it fails, and never writes a row for it. Two fixes to try before
-calling it closed: pre-compute the DDIM schedule once per N so the hot path is CUDA-only (this
-is also the right real-time-engineering move, and it needs a hand-rolled sampler loop whose
-correctness must then be checked against the library sampler), or install MSVC and re-run.
+**Compile modes: resolved 2026-10-28, five days after they were first blocked.** On 2026-10-27
+every compile mode failed with `InvalidCxxCompiler: Compiler: cl is not found`, which was
+recorded as an environment limitation (no MSVC). The diagnosis was right and the conclusion was
+wrong: the missing compiler was a *symptom*. `diffusers` keeps `alphas_cumprod` on the host and
+indexes it with a Python int per step, so the denoising loop contained 10 host scalars mixed
+into CUDA tensor math. That produces (a) one host/device synchronization per step and (b) a CPU
+partition in the Inductor graph, which is why a C++ compiler was wanted at all.
 
-Expected gains are not stated here; they are results. Measured 2026-10-27 on the pretrained
-checkpoint (262.7 M parameters fp32, batch 1, single process, idle GPU, DDIM):
+`src/flowpolicy/models/fast_sampler.py` fixes the cause: the DDIM coefficients are precomputed
+once on the sampling device and the loop is tensor-only. It is the same sampler -- equality with
+`diffusers` is checked at five step counts and two beta schedules in
+`tests/unit/test_fast_sampler.py` -- and it is now a single graph, so `torch.compile` and
+`CUDAGraph` both apply without MSVC. Two consequences worth keeping:
+
+- **The `torch.compile` rows exist and are reported** (`results/tables/e14_stack.md`). They are
+  worth roughly a tenth, not a multiple, and so are CUDA graphs. Launch overhead was never the
+  bottleneck at 262.7 M parameters; the network is. The from-scratch model's 4.7x graph / 5.8x
+  compile result was a property of an 11 M model, not of the technique.
+- **The real fix for a deadline is fewer sampler steps.** E3 plus E9/E14 say the only knob that
+  moves a chunk from missing a 100 ms period to fitting inside it is N.
+
+Measured 2026-10-27 on the pretrained checkpoint (262.7 M parameters fp32, batch 1, single
+process, idle GPU, DDIM) through the stock sampler; the fast sampler with graphs and compile is
+in E14:
 
 | N | eager mean | cudagraph mean | graph gain |
 |---|---|---|---|

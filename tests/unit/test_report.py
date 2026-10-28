@@ -35,8 +35,8 @@ def _row(**overrides: Any) -> dict[str, Any]:
 
 def test_empty_results_are_reported_as_not_measured() -> None:
     rows = headline_rows({})
-    assert len(rows) == 5
-    assert {source for _, _, source in rows} == {"E0", "E3", "E9", "E10", "E12"}
+    assert len(rows) == 6
+    assert {source for _, _, source in rows} == {"E0", "E3", "E9", "E10", "E12", "E14"}
     assert all("not measured yet" in answer for _, answer, _ in rows)
     assert "not measured" in headline_table({})
 
@@ -75,7 +75,92 @@ def test_e9_reports_eager_against_graph_and_the_missing_compile() -> None:
     _, answer, _ = headline_rows(rows)[2]
     assert "200.0 ms eager / 100.0 ms graph" in answer
     assert "2.00x" in answer
-    assert "torch.compile" in answer and "NOT RUN" in answer
+    # Without E14 rows there is nothing to say about compile, and it must not be invented.
+    assert "torch.compile" not in answer
+
+
+def test_e9_quotes_the_measured_compile_row_when_it_exists() -> None:
+    rows = {
+        "e9": [
+            _row(mode="eager", steps=4, mean_ms=80.0),
+            _row(mode="cudagraph", steps=4, mean_ms=70.0),
+        ],
+        "e14": [
+            _row(kind="latency", arm="fast-compile-default", steps=4, mean_ms=64.0),
+            _row(kind="latency", arm="fast-compile-reduce-overhead", steps=4, mean_ms=60.0),
+        ],
+    }
+    _, answer, _ = headline_rows(rows)[2]
+    assert "torch.compile" in answer
+    assert "60.0 ms at N=4" in answer  # the best compile mode, not the first one
+    assert "1.33x" in answer  # 80 ms stock eager / 60 ms compiled
+
+
+def test_e14_reports_the_cost_ratio_and_carries_quality() -> None:
+    rows = {
+        "e14": [
+            _row(
+                kind="throughput",
+                arm="published",
+                steps=100,
+                s_per_100_steps=55.7,
+                success_rate=0.5,
+                coverage_mean=0.94,
+                episodes=4,
+            ),
+            _row(
+                kind="throughput",
+                arm="fast-ddim4",
+                steps=4,
+                s_per_100_steps=0.81,
+                success_rate=0.75,
+                coverage_mean=0.96,
+                episodes=4,
+            ),
+        ]
+    }
+    _, answer, source = headline_rows(rows)[-1]
+    assert source == "E14"
+    assert "55.7 s" in answer and "0.81 s" in answer
+    assert "69x cheaper" in answer
+    assert "75%" in answer and "0.960" in answer
+
+
+def test_e14_flags_parallel_workers_that_do_not_help() -> None:
+    rows = {
+        "e14": [
+            _row(
+                kind="throughput",
+                arm="published",
+                steps=100,
+                s_per_100_steps=50.0,
+                success_rate=0.5,
+                coverage_mean=0.94,
+                episodes=4,
+            ),
+            _row(
+                kind="throughput",
+                arm="fast-ddim4",
+                steps=4,
+                s_per_100_steps=1.0,
+                success_rate=0.5,
+                coverage_mean=0.94,
+                episodes=4,
+            ),
+            _row(
+                kind="throughput",
+                arm="fast-ddim4-2w",
+                steps=4,
+                s_per_100_steps=1.8,
+                success_rate=0.5,
+                coverage_mean=0.94,
+                episodes=4,
+                workers=2,
+            ),
+        ]
+    }
+    _, answer, _ = headline_rows(rows)[-1]
+    assert "two rollout workers cost 1.8x per control step" in answer
 
 
 def test_e10_reports_success_delta_and_deadline_misses() -> None:
@@ -120,6 +205,6 @@ def test_e12_separates_naive_from_ensembling_at_the_same_replan_rate() -> None:
 
 def test_inventory_names_every_file_it_looked_for() -> None:
     lines = inventory({})
-    assert len(lines) == 8
+    assert len(lines) == 9
     assert any("results/ablation/e1.jsonl" in line.replace("\\", "/") for line in lines)
     assert all("0 rows" in line for line in lines)

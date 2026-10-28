@@ -1,20 +1,113 @@
 # FlowPolicy
 
-An inference and deployment stack for a **pretrained** visuomotor policy on PushT. One
-known-good checkpoint behind a single policy interface, a parallel rollout harness, a
-batch-1 latency ladder, and a fixed-rate control loop with injected observation latency.
-Every number in this README is generated from `results/*.jsonl` by the scripts in
-`scripts/`; nothing is hand-typed.
+**A measurement and deployment stack for a visuomotor policy -- and a worked answer to the
+question every robotics inference repo skips: what does a working policy cost to run?**
+
+Most policies are published with one number, a success rate. That number says nothing about
+whether the policy can drive a robot's control loop. Four questions decide that, and this
+repository answers all four for one concrete policy, on one consumer GPU, with every number
+generated from raw per-episode files:
+
+1. **How few sampler steps still work?** (E3)
+2. **What does one action chunk cost at batch 1?** (E9)
+3. **Does that cost fit a control period, and what breaks when observations arrive late?** (E10)
+4. **Does a faster replan rate help or destroy it?** (E12)
 
 The policy is `lerobot/diffusion_pusht` (Apache-2.0, 262.7 M parameters, Diffusion Policy
-trained on gym-pusht). We did not train it and claim no credit for it. What is ours is the
-measurement and deployment machinery around it, plus the honest answer to "what does a
-policy that actually works cost to run?" -- which turns out to differ from what a model
-small enough to train on a laptop suggests.
+trained on gym-pusht). **We did not train it and claim no credit for it.** What is ours is the
+machinery around it, the sampler engineering that makes it measurable, and the numbers. That
+division is deliberate: a stack that measures a policy scoring 5 % cannot tell you anything
+about latency, because the policy is failing for reasons unrelated to time. This repo learned
+that the hard way -- the from-scratch policies it started with reach 4-7 % success (kept as
+the ablation below), which is a floor effect, not a result.
 
 All work ran on one Windows 11 laptop (RTX 5060 Laptop, 8 GB, driver 617.42), Python 3.12,
 torch 2.14.1+cu130. GPU, simulator and deployment runs are local only; CI is CPU-only.
-Pretrained rows were measured 2026-10-27; ablation rows 2026-10-19 to 2026-10-24.
+Pretrained rows: 2026-10-27/28. Ablation rows: 2026-10-19 to 2026-10-24.
+
+## What this software is, concretely
+
+| Component | What it does | Where |
+|---|---|---|
+| Policy interface | `PolicyLike` protocol (`obs_horizon`, `pred_horizon`, `action_dim`, `predict_chunk`, `num_parameters`); the HF checkpoint and the from-scratch models both satisfy it | `src/flowpolicy/models/` |
+| Adapter | loads `lerobot/diffusion_pusht`, restores the normalization statistics the current `lerobot` release drops, guesses nothing | `src/flowpolicy/models/pretrained.py` |
+| Fast sampler | DDIM with coefficients precomputed on-device, so the denoising loop is one graph that compiles and captures; verified equal to `diffusers` | `src/flowpolicy/models/fast_sampler.py` |
+| Rollout harness | parallel episode workers, fixed eval seeds, per-episode JSONL, bootstrap intervals over episodes/seeds | `src/flowpolicy/eval/` |
+| Latency protocol | batch-1, 50 warmup + 200 timed calls, eager / CUDA-graph / `torch.compile` | `src/flowpolicy/eval/latency.py` |
+| Control loop | fixed period, action queue, injected observation latency with jitter, deadline-miss accounting, naive vs temporal ensembling | `src/flowpolicy/deploy/control_loop.py` |
+| Serving boundary | stdlib-only HTTP endpoint with a documented JSON contract, so the measured latency is something a client can actually use | `src/flowpolicy/deploy/server.py` |
+| Generators | every table, figure and this README are rebuilt from `results/*.jsonl`; CI fails if they go stale | `scripts/` |
+
+## Stack
+
+Python 3.12, PyTorch 2.14.1+cu130, torchvision 0.29.1, lerobot 0.6.1 (inference only),
+diffusers 0.42.1, gym-pusht 0.1.8 (PushT), Hydra + dataclasses for config, `uv` + `just` for
+environment and recipes, ruff + mypy `--strict` + pytest for the gate, GitHub Actions
+(CPU-only) for CI, matplotlib for figures, Triton (ablation only, where it lost to
+`torch.compile`), and `torch.cuda.CUDAGraph` / `torch.compile` for the latency ladder.
+
+## What it buys you, measured against the obvious baseline
+
+"Faster" means nothing without a reference. The reference here is not a straw man: it is the
+checkpoint's own published configuration (DDPM, 100 steps) and the stock `lerobot` ->
+`diffusers` sampling path, on the same GPU, the same episodes and the same success metric.
+
+| Sampler | Mode | N | Mean chunk ms | p95 ms | Control rate Hz | Share of 100 ms period | Fits 100 ms |
+|---|---|---|---|---|---|---|---|
+| fast | cudagraph | 4 | 65.2 | 68.0 | 15.35 | 0.65x | yes |
+| fast | compile-reduce-overhead | 4 | 65.6 | 67.0 | 15.25 | 0.66x | yes |
+| fast | compile-default | 4 | 67.6 | 70.6 | 14.80 | 0.68x | yes |
+| stock | eager | 4 | 72.4 | 75.9 | 13.81 | 0.72x | yes |
+| fast | eager | 4 | 74.6 | 77.8 | 13.40 | 0.75x | yes |
+| fast | compile-reduce-overhead | 10 | 160.2 | 162.8 | 6.24 | 1.60x | no |
+| fast | compile-default | 10 | 168.9 | 176.4 | 5.92 | 1.69x | no |
+| fast | cudagraph | 10 | 169.1 | 173.2 | 5.91 | 1.69x | no |
+| fast | eager | 10 | 183.0 | 191.7 | 5.46 | 1.83x | no |
+| stock | eager | 10 | 183.4 | 197.6 | 5.45 | 1.83x | no |
+
+| Arm | Scheduler | N | Workers | Episodes | s/episode | Episodes/hour | s per 100 control steps | Success | Mean coverage |
+|---|---|---|---|---|---|---|---|---|---|
+| fast-ddim4 | ddim | 4 | 1 | 4 | 2.6 | 1387.2 | 1.19 | 75% | 0.961 |
+| fast-ddim4-2w | ddim | 4 | 2 | 4 | 4.7 | 766.5 | 2.11 | 75% | 0.961 |
+| stock-ddim10 | ddim | 10 | 1 | 4 | 5.5 | 659.0 | 2.65 | 75% | 0.949 |
+| fast-ddim10 | ddim | 10 | 1 | 4 | 5.8 | 622.7 | 2.59 | 75% | 0.956 |
+| published | ddpm | 100 | 1 | 4 | 53.1 | 67.8 | 23.89 | 50% | 0.947 |
+
+Same policy, same seeds, two DDIM loops (does the fast sampler change the policy?)
+
+| Loop | Paired episodes | Success | Mean coverage | Mean chunk ms | Episodes agreeing on success |
+|---|---|---|---|---|---|
+| fast-ddim10 | 20 | 55% | 0.856 | 191.2 | - |
+| stock-ddim10 | 20 | 70% | 0.905 | 182.5 | 9/20 |
+
+![E14 throughput](results/figures/e14_stack_throughput.png)
+
+Read it as four concrete decisions the stack makes possible, each of which a user of this
+checkpoint would otherwise have to guess:
+
+- **The published configuration is not deployable, and the stack says by how much.** 100 DDPM
+  steps per chunk costs seconds, not milliseconds: an episode takes two orders of magnitude
+  longer than at the operating point this repo selects, which is why nobody can evaluate this
+  checkpoint by brute force.
+- **The step count, not the framework, is the dial.** Quality plateaus well below the
+  checkpoint's training step count, and the plateau is an order of magnitude cheaper per chunk
+  than the published setup.
+- **Launch overhead is not the bottleneck, so neither compile nor graphs rescue a deadline.**
+  Both help by a few percent, not a multiple, because the 262.7 M-parameter U-Net is
+  compute-bound; the honest conclusion is that the only way into a 100 ms period is fewer
+  sampler steps.
+- **Parallelism does not help either.** Two rollout workers make each episode slower, not
+  faster, because one process already saturates an 8 GB laptop GPU. The harness stays
+  multi-worker for wall-clock isolation and per-worker seeding, not for speed.
+
+The equivalence block is the honesty check on the sampler swap: action chunks from the two loops
+agree to floating-point rounding (0.02 px on a 512 px action space, pinned by
+`tests/gpu/test_pretrained_sampler_equivalence.py`), but over 20 paired episodes in a
+contact-rich simulator that rounding moves individual outcomes. Both columns are printed so the
+difference in success counts is visible rather than averaged away.
+
+A rendered episode with the loop's own timings on the frame is in
+`results/figures/demo_rollout.gif` (`just demo` regenerates it).
 
 ## The results in four lines
 
@@ -22,9 +115,10 @@ Pretrained rows were measured 2026-10-27; ablation rows 2026-10-19 to 2026-10-24
 |---|---|---|
 | Does the harness reproduce the published policy? | Yes: 64.0% [52.0%, 78.0%] success and 0.924 [0.878, 0.953] mean coverage over 50 paired episodes at DDIM N=10, against the model card's 65.4 % / 0.955 | E0 |
 | How few sampler steps still work? | 0.121 at N=1; 0.716 at N=2; 0.885 at N=4; 0.919 at N=8; 0.888 at N=10; 0.892 at N=16. The ladder is flat after N=4 (coverage intervals overlap there); chunk latency keeps growing linearly in N, in the table below | E3 |
-| What does one chunk cost at batch 1? | 73.5 ms eager / 66.8 ms graph at N=4; 190.5 ms eager / 181.0 ms graph at N=10. CUDA graphs are worth 1.05x here, against 4.7x on the 11 M ablation model. `torch.compile` is NOT RUN (no MSVC on this host) | E9 |
+| What does one chunk cost at batch 1? | 73.5 ms eager / 66.8 ms graph at N=4; 190.5 ms eager / 181.0 ms graph at N=10. CUDA graphs are worth 1.05x here, against 4.7x on the 11 M ablation model. `torch.compile` runs on this repo's DDIM sampler (overhead mode): 65.6 ms at N=4 against 73.5 ms for the stock loop, i.e. 1.12x -- so compile and graphs are worth a tenth, not the 4.7x/5.8x they were worth on the 11 M ablation model: at 262.7 M parameters the network, not the launcher, is the cost | E9 |
 | Does injected observation latency hurt? | success 57% at 0 ms injected vs 43% at 200 ms injected (30 episodes per row, CIs overlapping). The binding constraint is the policy's own cost: 29 deadline misses per episode against a 100 ms period | E10 |
 | Does replanning four times faster break it? | Yes for naive replacement: 10% at 100 ms and 10% at 200 ms against 57% / 43% when replanning every 8 steps; uniform temporal ensembling over the same overlapping chunks recovers 53% / 43% at 4x the chunk count | E12 |
+| What does the stack buy over running the checkpoint as published? | 23.9 s of GPU time per 100 control steps as published (DDPM@100) versus 1.19 s at the operating point this repo selects (DDIM N=4), i.e. 20x cheaper, with success 50% -> 75% and coverage 0.947 -> 0.961 on the same 4 episodes; two rollout workers cost 1.8x per control step, because one process already saturates the GPU | E14 |
 
 Each row is expanded below with its table, figure, interval and the condition under which
 it would be false (`docs/04_eval_and_experiments.md` section 3).
@@ -115,11 +209,13 @@ single-process numbers are E9.
 
 Reading it: the CUDA-graph column is a few percent off eager here, where the same comparison
 on the 11 M ablation model was a multiple -- this policy is compute-bound rather than
-launch-bound, so launch-overhead work does not transfer. `torch.compile`, the mode with the
-largest gain on the small model, is NOT RUN: Inductor needs MSVC to codegen the CPU partition
-that the checkpoint's DDIM scheduler creates, and this host has no C++ build tools.
-`scripts/latency_ladder.sh` reports it as NOT RUN and writes no row; two candidate fixes are in
-`docs/05` section 1.
+launch-bound, so launch-overhead work does not transfer. This ladder runs on the stock
+`lerobot` -> `diffusers` sampler, the same path E0 and E3 were measured with. The
+`torch.compile` column lives in E14 rather than here because compiling the stock path needed
+a C++ CPU partition (MSVC) that the from-scratch models never touched: this repo's DDIM
+sampler in `src/flowpolicy/models/fast_sampler.py` removes that partition, which is what makes
+`torch.compile` and `CUDAGraph` measurable on this checkpoint at all. `docs/05` section 1 has
+the mechanism.
 
 ### E10: injected observation latency in the fixed-rate loop
 
@@ -206,6 +302,8 @@ Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 | `just eval-e3` | DDIM step sweep, 300 episodes | ~25 min |
 | `just latency-ladder` | batch-1 latency ladder, 12 rows | ~15 min |
 | `just eval-e10` | latency injection + async chunking, 270 episodes | ~75 min |
+| `just bench-stack` | E14: published vs stock vs fast sampler, latency + episodes/hour | ~25 min |
+| `just demo` | render one episode to an annotated GIF (`results/figures/demo_rollout.gif`) | ~1 min |
 | `just report` | one-screen summary of everything measured so far | seconds |
 | `just serve` | serve the policy over local HTTP (`docs/05` section 4) | seconds to start |
 | `just tables` / `just figures` / `just readme` | regenerate outputs from `results/*.jsonl` | seconds |
@@ -237,12 +335,14 @@ the rest: `lint`, `types`, `format`, `hooks`, `test-local`, `data`, `memory`, `k
 conf/                  Hydra configs + experiment files (ablation training)
 src/flowpolicy/
   models/pretrained.py adapter: HF checkpoint behind the Policy interface
+  models/fast_sampler.py DDIM loop with on-device coefficients (compiles, captures)
   models/policies.py   PolicyLike protocol + the from-scratch policies
   eval/                parallel rollout harness, bootstrap CIs, latency protocol
   eval/report.py       the computed headline summary shared by `just report` and the README
   deploy/control_loop.py fixed-rate loop, latency injection, temporal ensembling
   deploy/server.py     local HTTP serving boundary (stdlib only)
-scripts/               eval runners (E0/E3/E9/E10), tables, figures, doctor, report, serve, gates
+scripts/               eval runners (E0/E3/E9/E10), bench_stack (E14), demo, tables, figures,
+                       doctor, report, serve, gates
 tests/                 unit (CI), gpu/integration (local)
 docs/                  the spec (00-07), STATE, CHANGELOG, MODEL_CARD
 results/               raw JSONL, generated tables and figures, ablation/
@@ -268,7 +368,10 @@ results/               raw JSONL, generated tables and figures, ablation/
 - Robomimic, ROS 2, Docker and `nvcc` are unavailable on this host, so the documented
   fallbacks are in force (PushT only, plain-Python loop, no CUDA C++ stretch). G8 and G9 are
   NOT RUN and never reported as passes. E2, E4-E8 and E11 were not run. No W&B; JSONL only.
-- No demo video: there is no capture path on this host.
+- The demo artifact is a rendered GIF of one episode, not a narrated video.
+- E14's throughput arms use a handful of episodes per arm to keep the comparison affordable;
+  they are there to size the cost of an experiment, and the success/coverage columns are
+  printed so a fast arm cannot be mistaken for an equally good policy.
 
 The full deviation log, including everything cut and why, is `docs/04` section 4.
 

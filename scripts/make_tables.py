@@ -158,6 +158,72 @@ def memory_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def stack_table(rows: list[dict[str, Any]]) -> str:
+    """E14: the same policy served three ways, and what each one costs.
+
+    Latency rows answer "does one chunk fit the control period"; throughput rows answer
+    "how long does an experiment take", with success and coverage carried so the cheap
+    arms cannot be quietly worse policies.
+    """
+    latency = sorted(
+        (r for r in rows if r.get("kind") == "latency"),
+        key=lambda r: (int(r["steps"]), float(r["mean_ms"])),
+    )
+    lines = [
+        "| Sampler | Mode | N | Mean chunk ms | p95 ms | Control rate Hz "
+        "| Share of 100 ms period | Fits 100 ms |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for row in latency:
+        lines.append(
+            f"| {row['sampler']} | {row['mode']} | {row['steps']} | {row['mean_ms']:.1f} "
+            f"| {row['p95_ms']:.1f} | {row['control_hz']:.2f} | {row['period_frac']:.2f}x "
+            f"| {'yes' if row['fits_100ms'] else 'no'} |"
+        )
+    lines.append("")
+
+    throughput = sorted(
+        (r for r in rows if r.get("kind") == "throughput"),
+        key=lambda r: float(r["episode_wall_s"]),
+    )
+    if throughput:
+        lines += [
+            "| Arm | Scheduler | N | Workers | Episodes | s/episode | Episodes/hour "
+            "| s per 100 control steps | Success | Mean coverage |",
+            "|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for row in throughput:
+            per_100 = row.get("s_per_100_steps")
+            per_100_text = f"{float(per_100):.2f}" if per_100 is not None else "n/a"
+            lines.append(
+                f"| {row['arm']} | {row['scheduler']} | {row['steps']} | {row['workers']} "
+                f"| {row['episodes']} | {row['episode_wall_s']:.1f} "
+                f"| {row['episodes_per_hour']:.1f} | {per_100_text} "
+                f"| {row['success_rate']:.0%} | {row['coverage_mean']:.3f} |"
+            )
+
+    equivalence = sorted(
+        (r for r in rows if r.get("kind") == "equivalence"), key=lambda r: r["arm"]
+    )
+    if equivalence:
+        lines += [
+            "",
+            "Same policy, same seeds, two DDIM loops (does the fast sampler change the policy?)",
+            "",
+            "| Loop | Paired episodes | Success | Mean coverage | Mean chunk ms "
+            "| Episodes agreeing on success |",
+            "|---|---|---|---|---|---|",
+        ]
+        for row in equivalence:
+            agree = row.get("episodes_agreeing")
+            agree_text = f"{agree}/{row['episodes']}" if agree is not None else "-"
+            lines.append(
+                f"| {row['arm']} | {row['episodes']} | {row['success_rate']:.0%} "
+                f"| {row['coverage_mean']:.3f} | {row['chunk_ms']:.1f} | {agree_text} |"
+            )
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     jobs = {
@@ -165,6 +231,7 @@ def main() -> None:
         "e3_steps.md": (ROOT / "e3.jsonl", e3_table),
         "e9_latency.md": (ROOT / "latency.jsonl", latency_table),
         "e10_deploy.md": (ROOT / "deploy.jsonl", deploy_table),
+        "e14_stack.md": (ROOT / "stack.jsonl", stack_table),
         # Ablation: the from-scratch policies and the training-cost measurements that
         # the pretrained checkpoint replaced (docs/04 section 4).
         "e1_ablation.md": (ABLATION / "e1.jsonl", e1_table),
@@ -184,6 +251,7 @@ def main() -> None:
             "e3": read(ROOT / "e3.jsonl"),
             "e9": read(ROOT / "latency.jsonl"),
             "e10": read(ROOT / "deploy.jsonl"),
+            "e14": read(ROOT / "stack.jsonl"),
         }
     )
     (OUT / "headline.md").write_text(headline)

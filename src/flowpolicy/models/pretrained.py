@@ -26,6 +26,8 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from flowpolicy.models.fast_sampler import DDIMCoefficients, ddim_coefficients, ddim_sample
+
 DEFAULT_HF_ID = "lerobot/diffusion_pusht"
 
 # `lerobot` 0.6.1 requires torch < 2.12 and this project pins torch 2.14.1. The import
@@ -93,6 +95,16 @@ class PretrainedDiffusionPolicy(nn.Module):
     `scheduler` picks how the reverse process is truncated: "ddim" (deterministic, the
     only sane choice when `steps` < num_train_timesteps) or "ddpm" (the checkpoint's own
     scheduler, stochastic at every step, which is what the published 65.4 % used).
+
+    `sampler` picks *whose* denoising loop runs for DDIM:
+
+    - "stock": lerobot -> diffusers `DDIMScheduler.step` per step. The reference path, and
+      the one this repo's E0 reproduction was measured with.
+    - "fast": `flowpolicy.models.fast_sampler`, which precomputes the DDIM scalars on the
+      device and keeps the loop in tensor math. Numerically the same sampler (checked
+      against diffusers in tests/unit/test_fast_sampler.py), but compilable and capturable
+      because it has no host-side scalar math. This is what makes `torch.compile` and
+      `torch.cuda.CUDAGraph` usable on this checkpoint at all; see docs/05 section 1.
     """
 
     def __init__(
@@ -101,6 +113,7 @@ class PretrainedDiffusionPolicy(nn.Module):
         *,
         device: str = "cuda",
         scheduler: str = "ddim",
+        sampler: str = "stock",
         pretrained_step: int = 175_000,
     ) -> None:
         super().__init__()
@@ -114,6 +127,12 @@ class PretrainedDiffusionPolicy(nn.Module):
         self.action_dim = int(cfg.action_feature.shape[0])
         self.pretrained_step = pretrained_step
         self.scheduler = scheduler
+        if sampler not in ("stock", "fast"):
+            raise ValueError(f"unknown sampler {sampler!r}")
+        if sampler == "fast" and scheduler != "ddim":
+            raise ValueError("the fast sampler implements DDIM only (eta=0); use scheduler='ddim'")
+        self.sampler = sampler
+        self._coeff_cache: dict[int, DDIMCoefficients] = {}
 
         stats = load_normalization(hf_id)
         # Annotated so mypy sees tensors, not `Tensor | Module` (register_buffer).
@@ -149,6 +168,64 @@ class PretrainedDiffusionPolicy(nn.Module):
         elif scheduler != "ddpm":
             raise ValueError(f"unknown scheduler {scheduler!r}")
 
+    def _coefficients(self, steps: int) -> DDIMCoefficients:
+        """DDIM scalars for `steps`, built once and reused (device-resident)."""
+        cached = self._coeff_cache.get(steps)
+        if cached is None:
+            diffusion = self.policy.diffusion
+            cfg = diffusion.noise_scheduler.config
+            cached = ddim_coefficients(
+                diffusion.noise_scheduler.alphas_cumprod,
+                int(cfg.num_train_timesteps),
+                steps,
+                device=next(diffusion.unet.parameters()).device,
+                dtype=torch.float32,
+                set_alpha_to_one=bool(cfg.set_alpha_to_one),
+            )
+            self._coeff_cache[steps] = cached
+        return cached
+
+    def warm(self, steps: int) -> None:
+        """Build the DDIM coefficients for `steps` before tracing or capturing.
+
+        `ddim_coefficients` reads scalars off tensors, which is a graph break. Doing it
+        ahead of `torch.compile` means the traced function contains only the tensor loop.
+        """
+        if self.sampler == "fast":
+            self._coefficients(int(steps))
+
+    def _fast_chunk(self, image: Tensor, state: Tensor, steps: int, noise: Tensor | None) -> Tensor:
+        diffusion = self.policy.diffusion
+        batch = {
+            "observation.state": state,
+            "observation.images": image.unsqueeze(2),  # (B, To, 1 camera, C, H, W)
+        }
+        global_cond = diffusion._prepare_global_conditioning(batch)
+        if noise is None:
+            noise = torch.randn(
+                batch["observation.state"].shape[0],
+                int(diffusion.config.horizon),
+                int(diffusion.config.action_feature.shape[0]),
+                device=image.device,
+                dtype=image.dtype,
+            )
+        coeffs = self._coefficients(steps)
+
+        def predict_epsilon(sample: Tensor, timesteps: Tensor) -> Tensor:
+            # `unet` is an untyped third-party module, so name the return type here.
+            predicted: Tensor = diffusion.unet(sample, timesteps, global_cond=global_cond)
+            return predicted
+
+        sample = ddim_sample(
+            predict_epsilon,
+            noise,
+            coeffs,
+            clip_sample=bool(diffusion.noise_scheduler.config.clip_sample),
+            clip_range=float(diffusion.noise_scheduler.config.clip_sample_range),
+        )
+        start = self.obs_horizon - 1
+        return sample[:, start : start + self.action_horizon]
+
     @torch.no_grad()
     def predict_chunk(
         self,
@@ -161,10 +238,13 @@ class PretrainedDiffusionPolicy(nn.Module):
             raise ValueError("steps must be >= 1")
         image = normalize_image(obs["image"].float(), self.image_mean, self.image_std)
         state = normalize_state(obs["state"].float(), self.state_low, self.state_high)
-        self.policy.diffusion.num_inference_steps = int(steps)
-        actions = self.policy.predict_action_chunk(
-            {"observation.image": image, "observation.state": state}, noise=noise
-        )
+        if self.sampler == "fast":
+            actions = self._fast_chunk(image, state, int(steps), noise)
+        else:
+            self.policy.diffusion.num_inference_steps = int(steps)
+            actions = self.policy.predict_action_chunk(
+                {"observation.image": image, "observation.state": state}, noise=noise
+            )
         chunk = denormalize_action(actions, self.action_low, self.action_high)
         return chunk.clamp_(0.0, 512.0)
 

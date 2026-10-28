@@ -94,17 +94,29 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
 - **2026-10-27: pretrained rows carry `train_seed = -1`.** There is exactly one pretrained
   PushT checkpoint, so E0, E3, E9 and E10 intervals are over episodes only. This is a real
   limitation of the substrate, not of the harness: it is stated on every table that has them.
-- **2026-10-27: `torch.compile` is NOT RUN on the pretrained path.** Every compile mode fails
-  with `torch._inductor.exc.InductorError: InvalidCxxCompiler: Compiler: cl is not found`:
-  Inductor wants MSVC to codegen a CPU partition, and the checkpoint's DDIM scheduler builds
-  host timesteps inside the sampled function, so the pretrained graph has a CPU partition
-  where the from-scratch policies (a pure CUDA graph) had none. Reproduced independently on
-  this host: `torch.compile(lambda x: x * 2)` compiles for a CUDA tensor and fails the same
-  way for a CPU tensor. E9 therefore has no compile rows for the pretrained model and
-  `scripts/latency_ladder.sh` reports them as NOT RUN instead of dying; the ablation's compile
-  rows are unaffected and stay in `results/ablation/latency.jsonl`. Candidate fixes, neither
-  attempted here: hoist the scheduler's host-side work out of the compiled region (pre-compute
-  the DDIM schedule once per N), or install the MSVC build tools on this host.
+- **2026-10-27: `torch.compile` was NOT RUN on the pretrained path; superseded 2026-10-28.**
+  Every compile mode failed with
+  `torch._inductor.exc.InductorError: InvalidCxxCompiler: Compiler: cl is not found`. The
+  recorded cause (Inductor wanting MSVC for a CPU partition created by the checkpoint's DDIM
+  scheduler) was correct, but the fix was not in the environment: `diffusers` keeps
+  `alphas_cumprod` on the host, so the loop blended host scalars into CUDA math and needed a
+  C++ compiler for it. `src/flowpolicy/models/fast_sampler.py` precomputes the coefficients
+  on-device and keeps the loop tensor-only, which removes both the partition and the per-step
+  host/device synchronization. That sampler is proven equal to `diffusers` at five step counts
+  and two beta schedules (`tests/unit/test_fast_sampler.py`).
+- **2026-10-28: E14 added (stack value), E9 compile rows now exist.** The question a
+  deployment stack has to answer is "compared to what", so E14 measures the checkpoint three
+  ways on the same GPU and the same episodes: the published configuration (DDPM@100), the stock
+  `lerobot` -> `diffusers` DDIM path, and this repo's fast sampler with graphs/compile. Latency
+  rows give per-chunk cost and control rate; throughput rows give seconds per episode with
+  success and coverage attached, so a cheaper arm cannot be a quietly worse policy. The E9
+  N-sweep stays on the stock sampler for comparability with the E0/E3 rows; the mode comparison
+  moved to E14. `torch.compile` rows are now real measurements, and they are worth about a
+  tenth rather than a multiple -- which is itself the finding: this model is compute-bound, so
+  launch-overhead work does not buy a control period.
+- **2026-10-28: the stock sampler is still what E0/E3/E10 rows were measured with.** The fast
+  sampler is the one E14 measures for speed; the two agree numerically, and E0's 64.0 % is the
+  anchor for both. Anything measured with `--sampler fast` is reported as such in its rows.
 
 ## 5. Acceptance criteria
 - [x] Harness test: eval/train seed overlap raises an error (`tests/unit/test_eval_seeds.py`, asserted in `rollout.evaluate`).

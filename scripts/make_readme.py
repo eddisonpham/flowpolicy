@@ -14,6 +14,7 @@ PLACEHOLDERS = {
     "{{E3_TABLE}}": "results/tables/e3_steps.md",
     "{{E9_TABLE}}": "results/tables/e9_latency.md",
     "{{E10_TABLE}}": "results/tables/e10_deploy.md",
+    "{{E14_TABLE}}": "results/tables/e14_stack.md",
     "{{E1_ABLATION_TABLE}}": "results/tables/e1_ablation.md",
     "{{M2_TABLE}}": "results/tables/m2_memory.md",
     "{{OVERFIT_TABLE}}": "results/tables/overfit.md",
