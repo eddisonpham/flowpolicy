@@ -90,6 +90,13 @@ bench-paced steps="4":
 bench-serve steps="4":
     uv run python scripts/bench_serve.py --steps {{steps}}
 
+# E15: a second published policy family through the same harness (generality check).
+# VQ-BeT has no sampler steps, so --steps is ignored by its adapter; --action-horizon is
+# its own 5-action chunk.
+eval-vqbet episodes="50" seed_start="100000":
+    uv run python scripts/prune_results.py --path results/vqbet.jsonl --prefix vqbet_pusht_n
+    uv run python scripts/evaluate.py --ckpt hf:lerobot/vqbet_pusht --config-id vqbet_pusht_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 1 --action-horizon 5 --workers 1 --out results/vqbet.jsonl
+
 # Render one episode to an annotated GIF (packaging, not a measurement).
 demo steps="4" seed="10000":
     uv run python scripts/demo_rollout.py --steps {{steps}} --seed {{seed}} --stride 1

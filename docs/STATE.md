@@ -9,6 +9,27 @@
 | Evidence | `just test` green (2026-10-28: ruff, ruff format, mypy strict on 26 files, 57 CPU unit tests, 1 smoke test); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
+## What changed on 2026-10-28 (E15: a second policy family, and the architecture page)
+
+**The generality claim is now measured, not asserted.** `lerobot/vqbet_pusht` (behaviour
+transformer over discretized action tokens, 5 observation steps, 5-action chunk, 37.5 M
+parameters) runs behind the same `PolicyLike` and through the unchanged harness, latency
+protocol and control loop. New code: `models/pretrained_vqbet.py` (config filtering + its
+own checkpoint normalization) and a `config.json`-`type` dispatch in `load_policy`. Evidence:
+`results/vqbet.jsonl` (50 episodes, seeds 100000-100049), `results/vqbet_latency.jsonl`,
+`results/vqbet_loop.jsonl`, `results/tables/generality.md`, README E15 section, `docs/04`
+matrix row + claim + false-if.
+
+Measured: 54.0 % [40.0 %, 68.0 %] success and 0.851 [0.790, 0.905] coverage against the
+checkpoint's published 57.0 % over 500 episodes (64 % on those same 50 seeds; 29/50 paired
+agreement). 9.2 ms per chunk eager at batch 1 (199 MiB peak), 1.83 ms per control step against
+the diffusion checkpoint's 9.19. The 10 pp gap to the published same-seed block is recorded as
+unexplained rather than smoothed over.
+
+Also in this pass: `docs/ARCHITECTURE.md` (one page: layers, seams, invariants, extension
+points), the README subtitle and `docs/MODEL_CARD.md` now state the deployment-cost framing
+explicitly, and four unit tests cover the config filtering the adapter depends on (61 tests).
+
 ## What changed on 2026-10-28 (clean-clone dry run, and the CI dependency it found)
 
 The README quickstart was executed in a fresh `git clone` of `7a0792a` in a temp directory, in

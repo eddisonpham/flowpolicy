@@ -3,6 +3,11 @@
 Written 2026-10-27. Two things are described here, because the distinction matters:
 the **borrowed policy** (not ours) and the **serving stack** (ours).
 
+**What the stack is for:** it is a deployment-cost rig -- what one action chunk costs, whether
+that fits a control period, and what breaks when it does not. It is not a policy, a training
+recipe or a benchmark leaderboard; the policy is third-party and the measurements are about
+running it.
+
 Every measured number below is copied from `results/tables/*.md`, which
 `scripts/make_tables.py` generates from the raw per-episode rows in `results/*.jsonl`; nothing
 here is typed by hand. Published numbers come from the checkpoint's own model card (accessed

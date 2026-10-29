@@ -46,6 +46,32 @@ def load_policy(
     """
     if str(checkpoint).startswith("hf:"):
         hf_id = str(checkpoint).removeprefix("hf:")
+        # Which family the checkpoint is comes from its own config.json, not from a CLI flag:
+        # a second published policy has to plug in here without touching eval or deploy.
+        kind = _hf_policy_type(hf_id)
+        if kind == "vqbet":
+            from policybench.models.pretrained_vqbet import PretrainedVQBeTPolicy
+
+            vqbet = PretrainedVQBeTPolicy(hf_id, device=device)
+            return vqbet, {
+                "policy": "pretrained-vqbet",
+                "source": hf_id,
+                "train_seed": -1,
+                "checkpoint": f"hf:{hf_id}",
+                # The checkpoint ships no step counter; -1 is this repo's "unknown", the
+                # same convention train_seed uses for a borrowed policy.
+                "step": -1,
+                "params": vqbet.num_parameters(),
+                "weights": "pretrained",
+                "scheduler": "none",
+                "sampler": "none",
+                "dtype": "float32",
+            }
+        if kind != "diffusion":
+            raise ValueError(
+                f"hf:{hf_id} is a {kind!r} policy; "
+                "this repo has adapters for 'diffusion' and 'vqbet'"
+            )
         pretrained = PretrainedDiffusionPolicy(
             hf_id, device=device, scheduler=scheduler, sampler=sampler, dtype=dtype
         )
@@ -88,6 +114,17 @@ def load_policy(
         "weights": "ema",
     }
     return policy, meta
+
+
+def _hf_policy_type(hf_id: str) -> str:
+    """Read `type` from the checkpoint's `config.json` ("diffusion", "vqbet", ...)."""
+    import json
+
+    from huggingface_hub import hf_hub_download
+
+    path = hf_hub_download(hf_id, "config.json")
+    with open(path, encoding="utf-8") as fh:
+        return str(json.load(fh).get("type", ""))
 
 
 def _obs_batch(

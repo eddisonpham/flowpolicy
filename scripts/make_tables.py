@@ -340,6 +340,53 @@ def serve_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Published success rates, from the checkpoints' own model cards / eval blocks. These are
+# external constants, not measurements of ours (docs/04 section 3).
+PUBLISHED_SUCCESS = {"diffusion": 0.654, "vqbet": 0.570}
+
+
+def generality_table(
+    vqbet_rows: list[dict[str, Any]],
+    diffusion_rows: list[dict[str, Any]],
+    diffusion_latency: list[dict[str, Any]],
+    vqbet_latency: list[dict[str, Any]],
+) -> str:
+    """Two policy families through one harness (docs/04 section 3, E15).
+
+    Diffusion numbers are E0 (success, coverage) and E9 (clean batch-1 chunk time); VQ-BeT
+    numbers are this repo's rows in `results/vqbet*.jsonl`. The per-control-step column is
+    the fair comparison: the two checkpoints do not predict the same number of actions per
+    forward pass, which is exactly what the interface has to hide.
+    """
+    diffusion = [row for row in diffusion_rows if row.get("scheduler") == "ddim"]
+    if not diffusion or not vqbet_rows:
+        return ""
+    d_lat = [
+        row for row in diffusion_latency if row.get("mode") == "eager" and row.get("steps") == 4
+    ]
+    d_ms = float(d_lat[0]["mean_ms"]) if d_lat else float("nan")
+    v_ms = float(vqbet_latency[0]["mean_ms"]) if vqbet_latency else float("nan")
+    lines = [
+        "| Checkpoint | Family | Episodes | Success (95% CI) | Published | Mean coverage (95% CI) "
+        "| Params M | Chunk ms (eager, batch 1) | Actions per chunk | ms per control step |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for label, rows, family, chunk_ms in (
+        ("lerobot/diffusion_pusht", diffusion, "diffusion", d_ms),
+        ("lerobot/vqbet_pusht", vqbet_rows, "vqbet", v_ms),
+    ):
+        point, lo, hi = bootstrap_ci(rows)
+        cov, cov_lo, cov_hi = bootstrap_ci(rows, metric="coverage")
+        acts = float(rows[0]["action_horizon"])
+        params = float(rows[0]["params"]) / 1e6
+        lines.append(
+            f"| `{label}` | {family} | {len(rows)} | {fmt_ci(point, lo, hi)} "
+            f"| {PUBLISHED_SUCCESS[family]:.1%} | {cov:.3f} [{cov_lo:.3f}, {cov_hi:.3f}] "
+            f"| {params:.1f} | {chunk_ms:.1f} | {acts:.0f} | {chunk_ms / acts:.2f} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     jobs = {
@@ -376,6 +423,18 @@ def main() -> None:
     )
     (OUT / "headline.md").write_text(headline)
     print(f"wrote {OUT / 'headline.md'}")
+
+    vqbet = read(ROOT / "vqbet.jsonl")
+    if vqbet:
+        (OUT / "generality.md").write_text(
+            generality_table(
+                vqbet,
+                read(ROOT / "e0.jsonl"),
+                read(ROOT / "latency.jsonl"),
+                read(ROOT / "vqbet_latency.jsonl"),
+            )
+        )
+        print(f"wrote {OUT / 'generality.md'}")
 
     replication = read(ROOT / "e3_replication.jsonl")
     if replication:

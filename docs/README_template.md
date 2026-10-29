@@ -1,7 +1,9 @@
 # PolicyBench
 
-**A measurement and deployment stack for a visuomotor policy -- and a worked answer to the
-question every robotics inference repo skips: what does a working policy cost to run?**
+**A deployment-cost measurement rig for a visuomotor policy: what one action chunk costs,
+whether that fits a control period, and what breaks when it does not.** Every number here is
+computed from raw per-episode files, printed with an interval, and paired with the condition
+that would make it false.
 
 ## Why this exists
 
@@ -242,6 +244,26 @@ Reading it: the GPU chunk time is the bulk of the round trip, and the JSON/socke
 a fixed slice of it rather than a rounding error -- which is why the serving path is measured
 rather than assumed. Two clients do not run in parallel; they queue on the GPU.
 
+### E15: the same harness, a second policy family
+
+Every measurement above is about one checkpoint, and a harness that only ever held one
+policy proves nothing about the harness. So the same interface was pointed at
+`lerobot/vqbet_pusht` (Apache-2.0): a behaviour transformer over discretized action tokens
+with 5 observation steps and a 5-action chunk -- no denoising sampler, no step count to
+truncate, 37.5 M parameters instead of 262.7 M. It needed one adapter
+(`models/pretrained_vqbet.py`, which restores that checkpoint's normalization the same way
+the diffusion adapter does) and a dispatch on the checkpoint's own `config.json` `type`.
+The rollout harness, the latency protocol, the control loop and every generator were not
+touched.
+
+{{GENERALITY_TABLE}}
+
+Reading it: the harness reproduces the second checkpoint's published band (54 % against
+57 %) and prices it at a fifth of the diffusion policy's cost per control step, without any
+code knowing which family it was holding. It does not reproduce it exactly -- 29 of 50
+paired episodes agree on success and coverage sits 4 pp lower -- and that gap is recorded
+rather than explained away. The point of the experiment is the seam, not the checkpoint.
+
 ## Ablation: what we tried first
 
 Before the pivot this repository trained three policies from scratch on PushT -- a
@@ -276,12 +298,13 @@ Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 | `just smoke` | 20 steps of real training on CPU + resume equivalence (the CI smoke job) | ~5 s |
 | `just eval-e0` | the acceptance gate: 100 episodes, two samplers | ~50 min |
 | `just eval-e3` | DDIM step sweep, 300 episodes | ~25 min |
+| `just eval-vqbet` | E15: a second published policy family through the same harness, 50 episodes | ~2 min |
 | `just latency-ladder` | batch-1 latency ladder, 12 rows | ~15 min |
 | `just eval-e10` | latency injection + async chunking, 270 episodes | ~75 min |
 | `just bench-stack` | E14: published vs stock vs fast sampler, latency + episodes/hour | ~25 min |
 | `just bench-precision` | E8: fp32 vs bf16 vs fp16, latency ladder + 40 paired episodes each | ~20 min |
 | `just bench-serve` | load-test the HTTP boundary (client vs server latency) | ~2 min |
-| `just bench-paced steps=4` | wall-clock paced loop at one step count (12 episodes) | ~7 min |
+| `just bench-paced 4` | wall-clock paced loop at one step count (12 episodes) | ~7 min |
 | `just demo` | render one episode to an annotated GIF (`results/figures/demo_rollout.gif`) | ~1 min |
 | `just report` | one-screen summary of everything measured so far | seconds |
 | `just serve` | serve the policy over local HTTP (`docs/05` section 4) | seconds to start |

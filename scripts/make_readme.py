@@ -19,6 +19,7 @@ PLACEHOLDERS = {
     "{{SERVE_TABLE}}": "results/tables/serve_load.md",
     "{{PACED_TABLE}}": "results/tables/paced_loop.md",
     "{{E14_TABLE}}": "results/tables/e14_stack.md",
+    "{{GENERALITY_TABLE}}": "results/tables/generality.md",
     "{{E1_ABLATION_TABLE}}": "results/tables/e1_ablation.md",
     "{{M2_TABLE}}": "results/tables/m2_memory.md",
     "{{OVERFIT_TABLE}}": "results/tables/overfit.md",

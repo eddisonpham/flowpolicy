@@ -306,3 +306,26 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   at collection because `tests/unit/test_fast_sampler.py` imports `diffusers`, absent from
   `uv.lock`. CI's `unit` job has the same shape, so it has been red since `9e5be8c`. Recorded as
   an open item in `docs/STATE.md` rather than fixed inside a rename.
+
+## 2026-10-28: E15 -- a second policy family through the same harness
+
+- **Why:** every measurement so far came from one checkpoint, so "the harness is general" was
+  an argument, not a result. `lerobot/vqbet_pusht` (Apache-2.0: behaviour transformer over
+  discretized action tokens, `n_obs_steps=5`, `action_chunk_size=5`, 37.5 M parameters) is a
+  different family from Diffusion Policy and was plugged in behind the same `PolicyLike`.
+- **Code:** `models/pretrained_vqbet.py` (drops the 2024 checkpoint's stale `mlp_hidden_dim`
+  before `draccus` parses the config; applies the six normalization buffers the modern library
+  loads as unexpected keys) and a dispatch on the checkpoint's own `config.json` `type` in
+  `load_policy`. Nothing in `eval/`, `deploy/`, the runners or the generators changed, which is
+  the point of the experiment.
+- **Measured:** 54.0 % [40.0 %, 68.0 %] success and 0.851 [0.790, 0.905] coverage over 50
+  episodes on seeds 100000-100049; the checkpoint's published block is 57.0 % over 500 episodes
+  and 64 % on exactly those 50 seeds, with 29/50 paired episodes agreeing. Chunk latency 9.2 ms
+  eager at batch 1 (199 MiB peak VRAM), i.e. 1.83 ms per control step against the diffusion
+  checkpoint's 9.19. The control loop runs it unchanged: 6 loop rows, zero deadline misses
+  (`results/vqbet_loop.jsonl`). The residual gap is recorded in `docs/04` rather than explained.
+- **Also:** `docs/ARCHITECTURE.md` (one page, code as built), the README subtitle and
+  `docs/MODEL_CARD.md` state the deployment-cost framing, four unit tests for the config
+  filtering, and a `just eval-vqbet` recipe.
+- Tests: 61 CPU unit tests (from 57). `just lint`, `just types`, `just test` green; tables,
+  figures and README regenerate.

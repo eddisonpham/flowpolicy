@@ -12,10 +12,11 @@ Source of truth for scope: the uploaded Agent Brief, still kept verbatim under i
 
 | File | Content |
 |---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | one page: the code as built, its seams, invariants and extension points (read this first after a pivot) |
 | [01_architecture.md](01_architecture.md) | diagram, interfaces, repo layout, CI, Docker |
 | [02_environment_setup.md](02_environment_setup.md) | verified versions, setup, gates G1-G9 |
 | [03_data_models_training.md](03_data_models_training.md) | data, DP recipe, policies, trainer, failure tests |
-| [04_eval_and_experiments.md](04_eval_and_experiments.md) | pre-registered protocol, experiment matrix E0-E14 |
+| [04_eval_and_experiments.md](04_eval_and_experiments.md) | pre-registered protocol, experiment matrix E0-E15 |
 | [05_inference_and_deployment.md](05_inference_and_deployment.md) | latency ladder, Triton, ROS 2, async chunking |
 | [06_decisions_and_risks.md](06_decisions_and_risks.md) | D1-D11 and risk register |
 | [07_roadmap.md](07_roadmap.md) | milestones M0-M9, agent rules, packaging |

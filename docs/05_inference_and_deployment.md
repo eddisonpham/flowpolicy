@@ -131,7 +131,7 @@ half of the two-node design: `policybench.deploy.server`, started with `just ser
 
 ```bash
 just serve                                     # hf:lerobot/diffusion_pusht, DDIM N=10, port 8000
-just serve port=8100 steps=4                   # the only step count that fits a 100 ms period
+just serve hf:lerobot/diffusion_pusht 8100 4   # ckpt port steps: the only N that fits 100 ms
 curl -s localhost:8000/health
 ```
 
