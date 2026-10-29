@@ -84,7 +84,7 @@ Honest-claims checklist (all must be yes before posting):
   `grep -rn "bit-exact"` matches only the rules forbidding it and the sentences saying the
   result is tolerance-based (`rtol=1e-5`).
 - [x] Limitations stated: simulation only, borrowed policy, one checkpoint (so episode-level
-  intervals), virtual-time loop, backend installed outside the lockfile.
+  intervals), virtual-time loop, `lerobot` installed outside the lockfile.
 
 LinkedIn series (3-4 posts): problem and approach; architecture; what broke (a real failure with root cause, from the CHANGELOG deviations); final numbers with CIs.
 

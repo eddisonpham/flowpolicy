@@ -110,9 +110,9 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   617.42 (CUDA UMD 13.4), compute capability (12, 0).
 - Python 3.12.13 in `.venv`, torch 2.14.1+cu130, torchvision 0.29.1+cu130,
   `triton-windows==3.8.0.post29` (Windows marker only).
-- Pretrained backend (outside the lockfile): lerobot 0.6.1, diffusers 0.42.1, safetensors
-  0.8.0, huggingface-hub 2.2.0, draccus 0.11.6. Verified importing and running on torch
-  2.14.1+cu130; lerobot's own requirement is torch < 2.12.
+- Pretrained runtime: lerobot 0.6.1 (outside the lockfile), diffusers 0.42.1 (locked in the
+  `dev` group as of 2026-10-28), safetensors 0.8.0, huggingface-hub 2.2.0, draccus 0.11.6.
+  Verified importing and running on torch 2.14.1+cu130; lerobot's own requirement is torch < 2.12.
 - Missing: Docker, ROS 2, `nvcc`, robosuite. G6, G8, G9a-G9c are NOT RUN and are never
   reported as passes.
 
@@ -174,15 +174,17 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
 
 ## Open items (not blockers)
 
-- **The `unit` CI job cannot pass from a clean checkout** (reproduced 2026-10-28):
+- **Resolved 2026-10-28: the `unit` CI job could not pass from a clean checkout.**
   `tests/unit/test_fast_sampler.py` imports `diffusers` to compare against the library's
-  scheduler, and `diffusers` is not in `uv.lock`. Two candidate fixes: add `diffusers` to the
-  `dev` group (keeps the equivalence test running in CI, ~1 extra dependency tree) or mark the
-  module `pytest.importorskip("diffusers")` (cheap, but then the strongest correctness check
-  never runs in CI). Recommendation: the dev group.
+  scheduler, and `diffusers` was installed only by `just setup-pretrained`, which CI never runs.
+  Fixed by pinning `diffusers==0.42.1` in the `dev` group, so the equivalence test (9 tests)
+  now runs under `uv sync --frozen` instead of being skipped. Verified in a CI-shaped env:
+  `uv sync --frozen` then `pytest -m "unit and not gpu"` -> 57 passed.
 - One checkpoint exists for PushT, so E0/E3/E9/E10 intervals are episode-level and there is
   no seed-to-seed variance to report. Stated on every table that has pretrained rows.
-- The backend lives outside `uv.lock`; `just setup` prunes it. Documented, not solved.
+- `lerobot` lives outside `uv.lock` (it caps torch < 2.12) and `just setup` prunes it;
+  `diffusers` is locked in `dev`, so the unit gate no longer depends on the backend. The
+  lerobot half is still documented rather than solved.
 - R5 (gym-pusht vs original PushT equivalence) is still unverified, but E0 now anchors the
   harness to an external published number, which is the stronger check.
 - E10/E12 run the loop in virtual time; the paced rows (`results/paced.jsonl`) are separate

@@ -7,7 +7,9 @@
 # `--no-deps` keeps the pinned stack and adds only the packages lerobot's inference path
 # actually imports. Verified working: torch 2.14.1+cu130, lerobot 0.6.1, diffusers 0.42.1.
 #
-# `uv sync` (just setup) prunes these, so re-run this script after a sync.
+# `uv sync` (just setup) prunes lerobot and the extras, so re-run this script after a sync.
+# diffusers is deliberately absent from that list: it is pinned in the dev group of
+# pyproject.toml because tests/unit/test_fast_sampler.py needs it, so the lock provides it.
 set -euo pipefail
 
 uv pip install --no-deps "lerobot==0.6.1"

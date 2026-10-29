@@ -3,23 +3,27 @@
 **A measurement and deployment stack for a visuomotor policy -- and a worked answer to the
 question every robotics inference repo skips: what does a working policy cost to run?**
 
+## Why this exists
+
 Most policies are published with one number, a success rate. That number says nothing about
-whether the policy can drive a robot's control loop. Four questions decide that, and this
-repository answers all four for one concrete policy, on one consumer GPU, with every number
-generated from raw per-episode files:
+whether the policy can drive a robot's control loop, and the four questions that decide it are
+usually answered by guesswork, or by a latency figure measured once, on other hardware, with a
+harness nobody can re-run. This repository answers all four for one concrete policy, on one
+consumer GPU, with every number generated from raw per-episode files:
 
 1. **How few sampler steps still work?** (E3)
 2. **What does one action chunk cost at batch 1?** (E9)
 3. **Does that cost fit a control period, and what breaks when observations arrive late?** (E10)
 4. **Does a faster replan rate help or destroy it?** (E12)
 
-The policy is `lerobot/diffusion_pusht` (Apache-2.0, 262.7 M parameters, Diffusion Policy
-trained on gym-pusht). **We did not train it and claim no credit for it.** What is ours is the
-machinery around it, the sampler engineering that makes it measurable, and the numbers. That
-division is deliberate: a stack that measures a policy scoring 5 % cannot tell you anything
+**What it is not.** Not a new policy, method or hardware result. The policy is borrowed --
+`lerobot/diffusion_pusht` (Apache-2.0, 262.7 M parameters, Diffusion Policy trained on
+gym-pusht) -- and we claim no credit for it. What is ours is the harness, the sampler
+engineering that makes it measurable, the control loop, the serving boundary and the numbers.
+That division is deliberate: a stack that measures a policy scoring 5 % cannot tell you anything
 about latency, because the policy is failing for reasons unrelated to time. This repo learned
-that the hard way -- the from-scratch policies it started with reach 4-7 % success (kept as
-the ablation below), which is a floor effect, not a result.
+that the hard way -- the from-scratch policies it started with reach 4-7 % success (kept as the
+ablation below), which is a floor effect, not a result.
 
 All work ran on one Windows 11 laptop (RTX 5060 Laptop, 8 GB, driver 617.42), Python 3.12,
 torch 2.14.1+cu130. GPU, simulator and deployment runs are local only; CI is CPU-only.
@@ -384,7 +388,7 @@ Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 | Recipe | What it does | Cost |
 |---|---|---|
 | `just setup` | locked env from `uv.lock` | minutes |
-| `just setup-pretrained` | adds the optional backend (lerobot 0.6.1 + diffusers) outside the lock | ~1 min, ~2 GB |
+| `just setup-pretrained` | adds `lerobot` 0.6.1 outside the lock (`diffusers` is already locked in `dev`) | ~1 min, ~2 GB |
 | `just doctor` | environment check: versions, CUDA, backend, checkpoint availability | seconds |
 | `just test` | ruff + mypy strict + CPU unit tests (what CI runs) | ~10 s |
 | `just smoke` | 20 steps of real training on CPU + resume equivalence (the CI smoke job) | ~5 s |
@@ -450,9 +454,11 @@ results/               raw JSONL, generated tables and figures, ablation/
   seed-to-seed variance, and two 50-episode samples of the same configuration (E0's eval seeds
   against E3's N=10 row) differ by about ten percentage points. That is the resolution limit of
   every table here, and it is why they print intervals rather than single numbers.
-- **The backend is installed outside the lockfile.** lerobot 0.6.1 requires `torch < 2.12`;
+- **`lerobot` is installed outside the lockfile.** lerobot 0.6.1 requires `torch < 2.12`;
   this project pins `torch 2.14.1+cu130`. `just setup-pretrained` installs it `--no-deps` on
-  top of the sync and `just setup` prunes it. Verified working, not supported.
+  top of the sync and `just setup` prunes it. Verified working, not supported. `diffusers`,
+  which the sampler-equivalence unit test imports, is in the locked `dev` group instead, so the
+  unit gate does not depend on this step.
 - **The checkpoint's normalization is applied by our code**, because current lerobot moved
   normalization into a processor pipeline this 2024 checkpoint does not ship. E0 is the gate
   that says the mapping is right.

@@ -39,8 +39,9 @@ Owner decides; each row has a recommended default. Mark the chosen option and da
 
 L = likelihood, I = impact (H/M/L). Estimates are judgments, not measurements.
 
-Outcomes as of 2026-10-27: R13 and R14 triggered by the D11 pivot and both handled -- the
-backend is installed outside the lockfile and the checkpoint's statistics are applied by
+Outcomes as of 2026-10-27: R13 and R14 triggered by the D11 pivot and both handled -- `lerobot`
+is installed outside the lockfile (its `diffusers` sampler is a locked dev dependency as of
+2026-10-28) and the checkpoint's statistics are applied by
 `models/pretrained.py`, with E0 (64.0 % success, 0.924 coverage at ddim@10 against the model
 card's 65.4 % / 0.955) as the check that the mapping is right. R6 is now resolved in the
 opposite direction: the ~64 % PushT figure *is* reproduced, by the pretrained checkpoint, and

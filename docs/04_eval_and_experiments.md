@@ -80,6 +80,12 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   imports (diffusers, draccus, einops, safetensors, opencv-python-headless, termcolor). The
   combination is verified working, not supported by either project, and `just setup` prunes
   it again.
+- **2026-10-28: `diffusers` moved into the locked `dev` group.** It was left to
+  `just setup-pretrained` on 2026-10-27, which meant `tests/unit/test_fast_sampler.py` -- a unit
+  test that compares this repo's DDIM loop against the library's scheduler -- could not be
+  collected after a clean `uv sync`. CI's `unit` job runs exactly that sequence, so it had been
+  failing since `9e5be8c`; the fix is one dependency, not a skipped test. `lerobot` itself stays
+  outside the lockfile for the torch reason above.
 - **2026-10-27: the checkpoint's normalization is applied by our code.** lerobot 0.6.1 moved
   normalization out of the policy into a processor pipeline that this 2024 checkpoint does
   not ship, so `from_pretrained` loads its eight `normalize_inputs.*` / `unnormalize_outputs.*`

@@ -82,8 +82,11 @@ The brief says "about 7 GB usable". Measured: 8151 MiB nominal, 3428 MiB free wh
 ### 3.4 Pretrained-policy backend (optional, 2026-10-27)
 
 The policy this stack measures is a borrowed checkpoint, not a trained one (D11). It needs
-packages that are deliberately **not** project dependencies, because lerobot 0.6.1 pins
-`torch < 2.12` while this project pins `torch 2.14.1+cu130` (section 3.1):
+`lerobot`, which is deliberately **not** a project dependency, because lerobot 0.6.1 pins
+`torch < 2.12` while this project pins `torch 2.14.1+cu130` (section 3.1). Its sampler library
+`diffusers` is a different case: it is pinned in the locked `dev` group (2026-10-28), because
+`tests/unit/test_fast_sampler.py` checks our DDIM loop against the library's scheduler and so
+has to be installed wherever the unit gate runs, CI included:
 
 ```bash
 just setup-pretrained     # scripts/setup_pretrained.sh
@@ -97,11 +100,15 @@ uv pip install "diffusers>=0.42" "draccus==0.11.6" "einops==0.8.2" "safetensors>
   "opencv-python-headless>=4.9" termcolor
 ```
 
+(the `diffusers` line is a no-op when the lock is already installed; it is kept so the script
+still works on its own)
+
 Measured combination on this host (2026-10-27): torch 2.14.1+cu130, torchvision 0.29.1,
 lerobot 0.6.1, diffusers 0.42.1, huggingface-hub 2.2.0, Python 3.12.13. Verified working,
 not supported: a normal `uv pip install lerobot` proposes torch 2.11.0 and numpy 2.2.6,
-which would invalidate every number measured on this GPU. `just setup` (`uv sync`) prunes the
-backend again, so re-run `just setup-pretrained` after a sync.
+which would invalidate every number measured on this GPU. `just setup` (`uv sync`) prunes
+`lerobot` and the extras again, so re-run `just setup-pretrained` after a sync; `diffusers`
+survives because it is in the lock.
 
 `just doctor` checks all of this as PASS / FAIL / NOT RUN in a few seconds (Python, torch +
 CUDA, the simulator, the lockfile, the optional backend, the checkpoint's availability, and
@@ -117,8 +124,11 @@ Two consequences worth knowing before debugging anything:
   produces a plausible-looking policy, which is why E0 exists as a gate.
 - The checkpoint (about 1.05 GB, 262.7 M parameters, fp32) downloads to
   `~/.cache/huggingface` on first use. Set `HF_TOKEN` to silence the rate-limit warning.
-- The backend is imported lazily, so `just test`, the ablation training and trained-checkpoint
-  eval keep working with it absent.
+- The runtime imports the backend lazily, so ablation training and trained-checkpoint eval keep
+  working with `lerobot` absent. The unit gate is the exception: `tests/unit/test_fast_sampler.py`
+  imports `diffusers` at module scope to compare against the library's scheduler, which is why
+  that one package is locked in `dev` (added 2026-10-28, after a clean `uv sync` showed the
+  collection failure that had been failing CI's `unit` job).
 
 ## 4. Known pitfalls (checked in the gates)
 
