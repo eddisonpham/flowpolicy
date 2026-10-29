@@ -366,3 +366,32 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   block instead of a hand-typed constant, and the note derives its verdict from p, so the table
   cannot claim a gap the data does not support.
 - Tests: 61 CPU unit tests, lint and mypy strict green after the change.
+
+## 2026-10-29 (later): the diffusion paired test at 200 seeds, and a VQ-BeT replication
+
+- **The 50-seed diffusion "not distinguished" was underpowered.** `just eval-dp-published` was
+  extended to 200 episodes on the checkpoint's own seeds (1000-1199, still inside its 1000-1499
+  block). Result: 104/200 (52.0 % [45.0 %, 58.5 %]) against the checkpoint's 138/200 (69.0 %),
+  106 agreeing, 30 succeeding only here and 64 only there, exact McNemar p < 0.001. The first 50
+  seeds of that same run reproduce the earlier block exactly (32/50), so this is not drift: at
+  five times the sample the gap is real.
+- **What the gap is made of.** Coverage is 0.895 [0.872, 0.917] against 0.915, i.e. ~2 pp lower,
+  and because success is a hard `coverage > 0.95` threshold that difference carries the outcomes:
+  64 episodes land in [0.90, 0.95), where this repo crosses the threshold 0 times and the
+  checkpoint 42. No root cause is established, so it is recorded as open rather than explained.
+- **Consequence for E0's headline.** The project no longer claims it reproduces the checkpoint's
+  success rate: coverage reproduces (0.924 on the gate block, 0.895 against the 0.907 the card's
+  0.955 `max_reward` implies), success does not. `docs/00` moves the criterion from PASS to
+  PARTIAL, and the README, `docs/04`, `docs/STATE`, `docs/MODEL_CARD` and `docs/RESUME` say so.
+- **VQ-BeT replicates.** A disjoint 200-seed block (`just eval-vqbet-replication`, seeds
+  100200-100399, `results/vqbet_replication.jsonl`) gives 108/200 (54.0 %) against the first
+  block's 108/200, two-sided Fisher exact p = 1.00; coverage 0.777 against 0.818. The success
+  rate is a property of the policy, not of the seed block.
+- **Code:** `make_tables.replication_note` computes the independent-block test and `paired_note`
+  prints `p < 0.001` instead of rounding to `0.00`; both notes carry the seed range, so a
+  200-episode note cannot be mistaken for a 50-episode table row. Five unit tests for the Fisher
+  helper and the replication wording (`tests/unit/test_tables.py`), plus `pythonpath = ["."]` in
+  the pytest config so tests can import `scripts.make_tables`.
+- **Housekeeping:** the two run logs a previous `git add -A` swept in are removed and
+  `results/logs/` is ignored.
+- Tests: 66 CPU unit tests (from 61).

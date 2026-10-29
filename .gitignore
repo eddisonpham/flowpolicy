@@ -42,6 +42,8 @@ htmlcov/
 
 # --- Large / generated artifacts (anchored to repo root) ---
 results/*.tmp
+# Run logs from long eval jobs: reproducible from the recipe, not a result.
+results/logs/
 /data/
 /logs/
 /runs/

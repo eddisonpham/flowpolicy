@@ -346,6 +346,26 @@ def serve_table(rows: list[dict[str, Any]]) -> str:
 PUBLISHED_SUCCESS = {"diffusion": 0.654, "vqbet": 0.570}
 
 
+def _fisher_exact(a: int, b: int, c: int, d: int) -> float:
+    """Two-sided Fisher exact p for the 2x2 table [[a, b], [c, d]].
+
+    The paired tests use McNemar because both runs see the same episodes. A replication block
+    sees *different* episodes, so the samples are independent and the right test is this one.
+    """
+    n = a + b + c + d
+    row1, col1 = a + b, a + c
+    if row1 == 0 or col1 == 0 or n == 0:
+        return 1.0
+
+    def prob(x: int) -> float:
+        return math.comb(row1, x) * math.comb(n - row1, col1 - x) / math.comb(n, col1)
+
+    observed = prob(a)
+    lo = max(0, col1 - (n - row1))
+    hi = min(row1, col1)
+    return min(1.0, sum(prob(x) for x in range(lo, hi + 1) if prob(x) <= observed + 1e-12))
+
+
 def _mcnemar_exact(ours_only: int, theirs_only: int) -> float:
     """Two-sided exact McNemar p-value over the discordant pairs."""
     n = ours_only + theirs_only
@@ -376,6 +396,8 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, 
         1 for row in shared if not row["success"] and theirs[int(row["eval_seed"])]["success"]
     )
     p = _mcnemar_exact(ours_only, theirs_only)
+    # Printing "p = 0.00" reads as a rounding bug; below 1e-3 say so.
+    p_text = "p < 0.001" if p < 0.001 else f"p = {p:.2f}"
     o_cov = sum(float(row["coverage"]) for row in shared) / n
     t_cov = sum(float(theirs[int(row["eval_seed"])]["coverage"]) for row in shared) / n
     pub_ok = sum(int(row["success"]) for row in published)
@@ -384,16 +406,56 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, 
         if p < 0.05
         else "the two runs are not distinguished at this sample size"
     )
+    first, last = (
+        min(int(row["eval_seed"]) for row in shared),
+        max(int(row["eval_seed"]) for row in shared),
+    )
     return (
-        f"- `lerobot/{family}_pusht`, {n} shared eval seeds: this repo {o_ok}/{n} "
+        f"- `lerobot/{family}_pusht`, {n} shared eval seeds ({first}-{last}, inside the "
+        f"checkpoint's own block): this repo {o_ok}/{n} "
         f"({o_ok / n:.1%}) against the checkpoint's own block {t_ok}/{n} ({t_ok / n:.1%}); "
         f"{n - ours_only - theirs_only} episodes agree, {ours_only} succeed only here and "
-        f"{theirs_only} only there, exact McNemar p = {p:.2f}, so {verdict}. Mean coverage "
+        f"{theirs_only} only there, exact McNemar {p_text}, so {verdict}. Mean coverage "
         f"{o_cov:.3f} here against {t_cov:.3f} there (their `max_reward` is rescaled: it is "
         f"coverage / 0.95). Their published block is {pub_ok}/{len(published)} = "
         f"{pub_ok / len(published):.1%} over {len(published)} episodes, and these shared seeds "
         f"are a sub-block of it. Source: `results/{family}_published.jsonl` "
         f"(`scripts/published_blocks.py`)."
+    )
+
+
+def replication_note(primary: list[dict[str, Any]], replication: list[dict[str, Any]]) -> str:
+    """Does the first block's rate repeat on a second, disjoint block of episodes?
+
+    Different seeds mean independent samples, so this is Fisher exact rather than McNemar. The
+    point is not a bigger n -- it is asking whether the number was an episode sample or the
+    policy.
+    """
+    if not primary or not replication:
+        return ""
+    a_ok = sum(int(row["success"]) for row in primary)
+    b_ok = sum(int(row["success"]) for row in replication)
+    p = _fisher_exact(a_ok, len(primary) - a_ok, b_ok, len(replication) - b_ok)
+    a_cov = sum(float(row["coverage"]) for row in primary) / len(primary)
+    b_cov = sum(float(row["coverage"]) for row in replication) / len(replication)
+    a_seeds = (min(int(r["eval_seed"]) for r in primary), max(int(r["eval_seed"]) for r in primary))
+    b_seeds = (
+        min(int(r["eval_seed"]) for r in replication),
+        max(int(r["eval_seed"]) for r in replication),
+    )
+    verdict = (
+        "the second block does not reproduce the first, so the rate is not a property of the "
+        "policy alone"
+        if p < 0.05
+        else "the two blocks are not distinguished, so the rate repeats within sampling error"
+    )
+    return (
+        f"- Replication on a disjoint block: {a_ok}/{len(primary)} ({a_ok / len(primary):.1%}) "
+        f"on seeds {a_seeds[0]}-{a_seeds[1]} against {b_ok}/{len(replication)} "
+        f"({b_ok / len(replication):.1%}) on seeds {b_seeds[0]}-{b_seeds[1]}; no episode is in "
+        f"both blocks, so the samples are independent (two-sided Fisher exact p = {p:.2f}), and "
+        f"{verdict}. Mean coverage {a_cov:.3f} against {b_cov:.3f}. Source: "
+        f"`results/vqbet.jsonl` and `results/vqbet_replication.jsonl`."
     )
 
 
@@ -405,6 +467,7 @@ def generality_table(
     vqbet_published: list[dict[str, Any]] | None = None,
     diffusion_paired: list[dict[str, Any]] | None = None,
     diffusion_published: list[dict[str, Any]] | None = None,
+    vqbet_replication: list[dict[str, Any]] | None = None,
 ) -> str:
     """Two policy families through one harness (docs/04 section 3, E0 and E15).
 
@@ -456,6 +519,9 @@ def generality_table(
         note = paired_note(ours, block, family=family)
         if note:
             lines += ["", note]
+    replication = replication_note(vqbet_rows, vqbet_replication or [])
+    if replication:
+        lines += ["", replication]
     return "\n".join(lines) + "\n"
 
 
@@ -507,6 +573,7 @@ def main() -> None:
                 vqbet_published=read(ROOT / "vqbet_published.jsonl"),
                 diffusion_paired=read(ROOT / "e0_published_seeds.jsonl"),
                 diffusion_published=read(ROOT / "diffusion_published.jsonl"),
+                vqbet_replication=read(ROOT / "vqbet_replication.jsonl"),
             )
         )
         print(f"wrote {OUT / 'generality.md'}")

@@ -12,7 +12,7 @@ PRE-REGISTRATION: commit this file before running E1 onward. Any change after th
 The Compute column below is filled with measured GPU time from the 1800-step runs and the eval logs, not guesses. "Not run" means exactly that; the fallback is recorded in §4.
 | ID | Experiment | Hypothesis (falsifiable) | Config | Seeds | Compute | Output |
 |---|---|---|---|---|---|---|
-| E0 | Pretrained DP checkpoint through our harness (strict success) | The model card's 65.4 % success / 0.907 mean coverage reproduces within the CI of 50 episodes paired on the block's own seeds (its 0.955 is coverage / 0.95) | `lerobot/diffusion_pusht`, image | 1 checkpoint | 0.7 GPU-h (100 episodes) + 50 paired episodes | validation table, `results/e0.jsonl`, `results/e0_published_seeds.jsonl` |
+| E0 | Pretrained DP checkpoint through our harness (strict success) | The model card's 65.4 % success / 0.907 mean coverage reproduces within the CI of 50 episodes paired on the block's own seeds (its 0.955 is coverage / 0.95) -- amended 2026-10-29 to 200 paired episodes, which reproduces the coverage but **not** the success rate (§4, entry of 2026-10-29) | `lerobot/diffusion_pusht`, image | 1 checkpoint | 0.7 GPU-h (100 episodes) + 200 paired episodes | validation table, `results/e0.jsonl`, `results/e0_published_seeds.jsonl` |
 | E1 | Ablation: from-scratch flow vs DDPM vs regression, PushT | Flow within 5 pp of DDPM at N=10 | 3 policies, same encoder/data | 3 at 12000 steps | 3.1 GPU-h train (3 x 12000 steps, 62-64 min each) + 0.03 h eval (450 episodes) | ablation table, `results/ablation/e1.jsonl` |
 | E2 | Same, robomimic Lift (+Can) | Same ordering as E1 or not (report either) | 3 policies | 3 | not run (G8 NOT RUN, D1) | — |
 | E3 | Integration steps N in {1,2,4,8,10,16} on the pretrained checkpoint, DDIM | Success degrades as N falls, and the DDIM ladder is usable where the DDPM one is not | pretrained, no retrain | 1 checkpoint | 0.4 GPU-h (300 episodes) | HEADLINE fig: N vs success vs latency, `results/e3.jsonl` |
@@ -168,6 +168,20 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
 - **2026-10-28: the stock sampler is still what E0/E3/E10 rows were measured with.** The fast
   sampler is the one E14 measures for speed; the two agree numerically, and E0's 64.0 % is the
   anchor for both. Anything measured with `--sampler fast` is reported as such in its rows.
+
+- **2026-10-29: E0's paired block was extended to 200 seeds, and its success hypothesis failed.**
+  The 50-episode block (seeds 1000-1049) reported 32/50 against the checkpoint's 37/50, p = 0.40,
+  which was read as "not distinguished". Keeping those seeds and adding 150 more (1000-1199)
+  gives 104/200 (52.0 % [45.0 %, 58.5 %]) against 138/200 (69.0 %), exact McNemar p < 0.001; the
+  first 50 reproduce exactly, so the earlier reading was a power problem, not a different result.
+  Coverage is 0.895 [0.872, 0.917] against 0.915 (~2 pp), and the outcome gap sits where that
+  difference meets the hard 0.95 threshold: 64 episodes land in [0.90, 0.95), where this repo
+  succeeds 0 times and the checkpoint 42. Coverage still reproduces the card; success does not,
+  and no root cause is established -- E0's criterion in `docs/00` is now PARTIAL.
+- **2026-10-29: VQ-BeT's 54 % was replicated on a disjoint block.** `just eval-vqbet-replication`
+  ran seeds 100200-100399 (`results/vqbet_replication.jsonl`), which share no episode with the
+  first block: 108/200 against 108/200, two-sided Fisher exact p = 1.00, coverage 0.777 against
+  0.818. Independent blocks get an independent test; McNemar applies only to the paired ones.
 
 ## 5. Acceptance criteria
 - [x] Harness test: eval/train seed overlap raises an error (`tests/unit/test_eval_seeds.py`, asserted in `rollout.evaluate`).

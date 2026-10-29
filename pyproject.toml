@@ -88,6 +88,8 @@ disallow_untyped_defs = false
 minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config"
 testpaths = ["tests"]
+# So tests can exercise the measurement scripts (`scripts.make_tables`), which are not a package.
+pythonpath = ["."]
 markers = [
     "unit: fast CPU-only tests; the only marker that runs in CI",
     "smoke: end-to-end tiny training run on CPU; the CI smoke job (docs/01 section 4)",

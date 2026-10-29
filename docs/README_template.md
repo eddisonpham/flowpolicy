@@ -119,9 +119,10 @@ Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/), [just](https://gith
 
 ### E0: the pretrained checkpoint through our harness
 
-This is a validation, not a result we own. It is also the project's reproduction check: the
-model card reports 65.4 % success and 0.955 mean `max_reward` over 500 episodes -- which
-gym-pusht defines as `coverage / 0.95`, so the coverage it implies is 0.907.
+This is a validation, not a result we own. It is also the project's reproduction check, and
+after 2026-10-29 a partial one: the model card reports 65.4 % success and 0.955 mean
+`max_reward` over 500 episodes -- which gym-pusht defines as `coverage / 0.95`, so the coverage
+it implies is 0.907.
 
 {{E0_TABLE}}
 
@@ -132,6 +133,13 @@ own scheduler and step count, i.e. the published setup. Two caveats: the interva
 the 50 episodes, because PushT has exactly one pretrained checkpoint and there is no training
 seed to resample; and these two rows ran with two rollout workers sharing the GPU, so their
 latency column is roughly 2x the clean single-process numbers in E9.
+
+On the checkpoint's own seed block the comparison can be paired, and at 200 episodes it stops
+flattering us: 104/200 against the checkpoint's 138/200, exact McNemar p < 0.001. Coverage
+reproduces (0.895 [0.872, 0.917] against 0.915), so what separates the runs is a ~2 pp coverage
+difference meeting a hard 0.95 success threshold -- 64 episodes land in [0.90, 0.95), where this
+repo crosses it zero times and the checkpoint 42. That is recorded as open, not explained
+(`docs/04` section 4).
 
 Reading it: the checkpoint's own 100-step DDPM sampling is over ten times slower per chunk
 than 10-step DDIM and no better here (compare the two rows), which is the first hint that this
@@ -262,12 +270,15 @@ touched.
 Reading it: the harness reproduces the second checkpoint's published band (54 % against
 57 %) and prices it at a fifth of the diffusion policy's cost per control step, without any
 code knowing which family it was holding. Both checkpoints ship a per-episode eval block, so
-both comparisons are paired rather than hand-waved, and the two bullets under the table are
-those tests: 108/200 against 113/200 for VQ-BeT (p = 0.68) and 32/50 against 37/50 for
-diffusion (p = 0.40). Neither block orders the two runs, so the honest reading is that this
-harness neither flatters nor damages the checkpoints it holds. The one column that does
-separate them is coverage, where this repo sits slightly higher on both (0.818 against 0.780,
-0.914 against 0.913). The point of the experiment is the seam, not the checkpoint.
+both comparisons are paired rather than hand-waved, and the bullets under the table are those
+tests, each on 200 shared seeds. VQ-BeT is not distinguished from its own block (108/200
+against 113/200, p = 0.68), and it repeats exactly on a disjoint block of 200 fresh seeds
+(108/200 again, Fisher p = 1.00). Diffusion gives the opposite answer at 200 seeds: 104/200
+against the checkpoint's 138/200, p < 0.001. Fifty seeds had said "not distinguished"; that
+was a power problem, not a result. Coverage is the column that separates them (0.895 against
+0.915) and also the likely link: 64 episodes land in [0.90, 0.95), where this repo crosses the
+0.95 success threshold 0 times and the checkpoint 42 times. The point of the experiment is the
+seam, not the checkpoint -- and the seam currently carries one unresolved gap.
 
 ## Ablation: what we tried first
 
