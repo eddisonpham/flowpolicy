@@ -323,7 +323,17 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   and 64 % on exactly those 50 seeds, with 29/50 paired episodes agreeing. Chunk latency 9.2 ms
   eager at batch 1 (199 MiB peak VRAM), i.e. 1.83 ms per control step against the diffusion
   checkpoint's 9.19. The control loop runs it unchanged: 6 loop rows, zero deadline misses
-  (`results/vqbet_loop.jsonl`). The residual gap is recorded in `docs/04` rather than explained.
+  (`results/vqbet_loop.jsonl`).
+- **Correction, same day: the same-seed comparison is paired, and there is no resolved gap.**
+  The first version reported a "10 pp success gap to the published same-seed block and a 4 pp
+  coverage gap" as unexplained. Both parts were wrong. The checkpoint ships `eval_info.json`
+  with one row per episode, so the comparison can be paired: 27/50 here against 32/50 there on
+  the 50 shared seeds, 29 agreeing, 8 succeeding only here and 13 only there, exact McNemar
+  p = 0.38. And gym-pusht reports `reward = clip(coverage / 0.95, 0, 1)`, so the published
+  `max_reward` column is coverage divided by 0.95 -- the "4 pp coverage gap" was that scaling.
+  Rescaled, coverage is 0.851 here against 0.842 there. `scripts/vqbet_published.py` pins the
+  published block to `results/vqbet_published.jsonl` so the test regenerates offline (it is
+  committed rather than fetched, so `just tables` stays network-free).
 - **Also:** `docs/ARCHITECTURE.md` (one page, code as built), the README subtitle and
   `docs/MODEL_CARD.md` state the deployment-cost framing, four unit tests for the config
   filtering, and a `just eval-vqbet` recipe.

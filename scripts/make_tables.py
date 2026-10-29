@@ -7,6 +7,7 @@ from-scratch ablation lives in results/ablation/. Missing files are skipped.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -345,11 +346,56 @@ def serve_table(rows: list[dict[str, Any]]) -> str:
 PUBLISHED_SUCCESS = {"diffusion": 0.654, "vqbet": 0.570}
 
 
+def _mcnemar_exact(ours_only: int, theirs_only: int) -> float:
+    """Two-sided exact McNemar p-value over the discordant pairs."""
+    n = ours_only + theirs_only
+    if n == 0:
+        return 1.0
+    tail = sum(math.comb(n, i) for i in range(min(ours_only, theirs_only) + 1)) / 2**n
+    return min(1.0, 2 * tail)
+
+
+def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]]) -> str:
+    """Same-seed comparison against the checkpoint's own eval block (docs/04 section 3, E15).
+
+    `published` rows come from `scripts/vqbet_published.py`. Their `coverage` column is
+    `max_reward * 0.95`, because gym-pusht reports reward as `clip(coverage / 0.95, 0, 1)`;
+    comparing our coverage against their raw `max_reward` invents a 5 % gap.
+    """
+    theirs = {int(row["eval_seed"]): row for row in published}
+    shared = [row for row in ours if int(row["eval_seed"]) in theirs]
+    if not shared:
+        return ""
+    n = len(shared)
+    o_ok = sum(1 for row in shared if row["success"])
+    t_ok = sum(1 for row in shared if theirs[int(row["eval_seed"])]["success"])
+    ours_only = sum(
+        1 for row in shared if row["success"] and not theirs[int(row["eval_seed"])]["success"]
+    )
+    theirs_only = sum(
+        1 for row in shared if not row["success"] and theirs[int(row["eval_seed"])]["success"]
+    )
+    p = _mcnemar_exact(ours_only, theirs_only)
+    o_cov = sum(float(row["coverage"]) for row in shared) / n
+    t_cov = sum(float(theirs[int(row["eval_seed"])]["coverage"]) for row in shared) / n
+    return (
+        f"Paired check on the {n} eval seeds both blocks ran: this repo {o_ok}/{n} "
+        f"({o_ok / n:.1%}) against the checkpoint's own block {t_ok}/{n} ({t_ok / n:.1%}); "
+        f"{n - ours_only - theirs_only} episodes agree, {ours_only} succeed only here and "
+        f"{theirs_only} only there, exact McNemar p = {p:.2f}. Mean max coverage {o_cov:.3f} "
+        f"here against {t_cov:.3f} there. The published figure is a 500-episode aggregate "
+        f"(57.0 %), so the two arms differ by 8 successes against 13 -- not a resolved gap at "
+        f"this sample size. Source: `results/vqbet_published.jsonl` "
+        f"(`scripts/vqbet_published.py`)."
+    )
+
+
 def generality_table(
     vqbet_rows: list[dict[str, Any]],
     diffusion_rows: list[dict[str, Any]],
     diffusion_latency: list[dict[str, Any]],
     vqbet_latency: list[dict[str, Any]],
+    published: list[dict[str, Any]] | None = None,
 ) -> str:
     """Two policy families through one harness (docs/04 section 3, E15).
 
@@ -384,6 +430,9 @@ def generality_table(
             f"| {PUBLISHED_SUCCESS[family]:.1%} | {cov:.3f} [{cov_lo:.3f}, {cov_hi:.3f}] "
             f"| {params:.1f} | {chunk_ms:.1f} | {acts:.0f} | {chunk_ms / acts:.2f} |"
         )
+    note = paired_note(vqbet_rows, published or [])
+    if note:
+        lines += ["", note]
     return "\n".join(lines) + "\n"
 
 
@@ -432,6 +481,7 @@ def main() -> None:
                 read(ROOT / "e0.jsonl"),
                 read(ROOT / "latency.jsonl"),
                 read(ROOT / "vqbet_latency.jsonl"),
+                read(ROOT / "vqbet_published.jsonl"),
             )
         )
         print(f"wrote {OUT / 'generality.md'}")

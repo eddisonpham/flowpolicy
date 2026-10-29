@@ -260,9 +260,12 @@ touched.
 
 Reading it: the harness reproduces the second checkpoint's published band (54 % against
 57 %) and prices it at a fifth of the diffusion policy's cost per control step, without any
-code knowing which family it was holding. It does not reproduce it exactly -- 29 of 50
-paired episodes agree on success and coverage sits 4 pp lower -- and that gap is recorded
-rather than explained away. The point of the experiment is the seam, not the checkpoint.
+code knowing which family it was holding. The checkpoint ships its per-episode eval block,
+so that comparison is paired rather than hand-waved: on the 50 seeds both ran it is 27/50
+against 32/50, 8 episodes succeed only here and 13 only there (exact McNemar p = 0.38), and
+mean max coverage is 0.851 against 0.842. Fifty episodes cannot order the two runs, and the
+table says so instead of claiming either a match or a gap. The point of the experiment is
+the seam, not the checkpoint.
 
 ## Ablation: what we tried first
 

@@ -97,6 +97,11 @@ eval-vqbet episodes="50" seed_start="100000":
     uv run python scripts/prune_results.py --path results/vqbet.jsonl --prefix vqbet_pusht_n
     uv run python scripts/evaluate.py --ckpt hf:lerobot/vqbet_pusht --config-id vqbet_pusht_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 1 --action-horizon 5 --workers 1 --out results/vqbet.jsonl
 
+# Pin the checkpoint's own per-episode eval block (500 seeds) for the E15 paired test.
+# Network only; the result is committed so `just tables` never needs it.
+vqbet-published:
+    uv run python scripts/vqbet_published.py
+
 # Render one episode to an annotated GIF (packaging, not a measurement).
 demo steps="4" seed="10000":
     uv run python scripts/demo_rollout.py --steps {{steps}} --seed {{seed}} --stride 1

@@ -21,10 +21,17 @@ own checkpoint normalization) and a `config.json`-`type` dispatch in `load_polic
 matrix row + claim + false-if.
 
 Measured: 54.0 % [40.0 %, 68.0 %] success and 0.851 [0.790, 0.905] coverage against the
-checkpoint's published 57.0 % over 500 episodes (64 % on those same 50 seeds; 29/50 paired
-agreement). 9.2 ms per chunk eager at batch 1 (199 MiB peak), 1.83 ms per control step against
-the diffusion checkpoint's 9.19. The 10 pp gap to the published same-seed block is recorded as
-unexplained rather than smoothed over.
+checkpoint's published 57.0 % over 500 episodes. 9.2 ms per chunk eager at batch 1 (199 MiB
+peak), 1.83 ms per control step against the diffusion checkpoint's 9.19.
+
+**Corrected the same day: the "10 pp gap" was not a gap.** The checkpoint ships
+`eval_info.json` with one row per episode, so the comparison is now paired instead of
+asserted: on the 50 shared seeds, 27/50 here against 32/50 there, 29 episodes agreeing, 8
+succeeding only here and 13 only there, exact McNemar p = 0.38 -- unresolved at this sample
+size. Mean max coverage 0.851 against 0.842. The earlier "4 pp coverage gap" was a units
+error (gym-pusht reports `reward = clip(coverage / 0.95, 0, 1)`, so the published
+`max_reward` column is not coverage). `scripts/vqbet_published.py` pins that block to
+`results/vqbet_published.jsonl`; `results/tables/generality.md` prints the test under the row.
 
 Also in this pass: `docs/ARCHITECTURE.md` (one page: layers, seams, invariants, extension
 points), the README subtitle and `docs/MODEL_CARD.md` now state the deployment-cost framing
