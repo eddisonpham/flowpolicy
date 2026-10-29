@@ -73,7 +73,8 @@ def headline_rows(results: Mapping[str, list[Row]]) -> list[tuple[str, str, str]
             (
                 "Does the harness reproduce the published policy?",
                 f"Yes: {_fmt_ci(point, lo, hi)} success and {_coverage(e0)} mean coverage over "
-                f"{len(e0)} paired episodes at DDIM N=10, against the model card's 65.4 % / 0.955",
+                f"{len(e0)} episodes at DDIM N=10, against the model card's 65.4 % success and "
+                f"0.907 mean coverage (its 0.955 column is `max_reward`, i.e. coverage / 0.95)",
                 "E0",
             )
         )

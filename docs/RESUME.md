@@ -25,7 +25,8 @@ contradicted the plan.
   and a GPU regression test.
 - **Reproduced a published Diffusion Policy result within interval on an independently built
   harness**: 64.0 % success (95 % CI 52.0-78.0 %) and 0.924 mean coverage over 50 paired PushT
-  episodes, against the model card's 65.4 % / 0.955 -- **after restoring eight normalization
+  episodes, against the model card's 65.4 % / 0.907 coverage (its 0.955 column is `max_reward`)
+  -- **after restoring eight normalization
   tensors that the current library release silently drops at load time**.
 - **Determined that a 100 ms control period admits at most 4 sampler steps on an 8 GB laptop
   GPU**: 65-73 ms per action chunk at N=4 versus 160-183 ms at N=10, which meant 27-33 missed

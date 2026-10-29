@@ -339,3 +339,30 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   filtering, and a `just eval-vqbet` recipe.
 - Tests: 61 CPU unit tests (from 57). `just lint`, `just types`, `just test` green; tables,
   figures and README regenerate.
+
+## 2026-10-29: both paired tests at their real sample size
+
+- **VQ-BeT, 50 -> 200 shared seeds.** The 50-episode block could not order this repo's run
+  against the checkpoint's own block (8 vs 13 discordant, p = 0.38). The block was grown to
+  seeds 100000-100199: 108/200 (54.0 % [47.0 %, 61.0 %]) against the checkpoint's 113/200
+  (56.5 %) on the same seeds, 107 agreeing, 44 succeeding only here and 49 only there, exact
+  McNemar p = 0.68 -- not distinguished. Mean coverage 0.818 against 0.780, so this repo
+  reaches the goal slightly further on the episodes it wins. `just eval-vqbet` now defaults to
+  200 episodes, and `results/vqbet.jsonl` is that block (the earlier 50 rows were re-run rather
+  than kept, so the config id moved from `vqbet_pusht_n50` to `vqbet_pusht_n200`).
+- **Diffusion gets the same treatment.** E0 has always run on seeds 10000-10049, which is
+  outside `lerobot/diffusion_pusht`'s own block (1000-1499), so that comparison could only be
+  aggregate-to-aggregate. `just eval-dp-published` re-ran 50 episodes on seeds 1000-1049
+  (`results/e0_published_seeds.jsonl`): 32/50 (64.0 %) against the checkpoint's 37/50 (74.0 %),
+  27 agreeing, 9 vs 14 discordant, exact McNemar p = 0.40; coverage 0.914 against 0.913.
+- **A units error corrected in E0 too.** The model card's 0.955 is `max_reward`, i.e.
+  coverage / 0.95, so the coverage it implies is 0.907 -- every place that compared our 0.924
+  coverage against "0.955" was comparing two different quantities. Fixed in the README,
+  `docs/00`, `docs/04`, `docs/06`, `docs/MODEL_CARD`, `docs/RESUME`, the headline generator
+  (`src/policybench/eval/report.py`) and the E0 figure's reference line.
+- **Code:** `scripts/vqbet_published.py` -> `scripts/published_blocks.py` (`just
+  published-blocks`), which pins both blocks to `results/{vqbet,diffusion}_published.jsonl`.
+  `make_tables.paired_note` is per-family, the "Published" column is computed from the pinned
+  block instead of a hand-typed constant, and the note derives its verdict from p, so the table
+  cannot claim a gap the data does not support.
+- Tests: 61 CPU unit tests, lint and mypy strict green after the change.

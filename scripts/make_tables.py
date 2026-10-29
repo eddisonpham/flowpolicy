@@ -355,10 +355,10 @@ def _mcnemar_exact(ours_only: int, theirs_only: int) -> float:
     return min(1.0, 2 * tail)
 
 
-def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]]) -> str:
-    """Same-seed comparison against the checkpoint's own eval block (docs/04 section 3, E15).
+def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, family: str) -> str:
+    """Same-seed comparison against a checkpoint's own eval block (docs/04 section 3).
 
-    `published` rows come from `scripts/vqbet_published.py`. Their `coverage` column is
+    `published` rows come from `scripts/published_blocks.py`. Their `coverage` column is
     `max_reward * 0.95`, because gym-pusht reports reward as `clip(coverage / 0.95, 0, 1)`;
     comparing our coverage against their raw `max_reward` invents a 5 % gap.
     """
@@ -378,15 +378,22 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]]) -> 
     p = _mcnemar_exact(ours_only, theirs_only)
     o_cov = sum(float(row["coverage"]) for row in shared) / n
     t_cov = sum(float(theirs[int(row["eval_seed"])]["coverage"]) for row in shared) / n
+    pub_ok = sum(int(row["success"]) for row in published)
+    verdict = (
+        "the two runs are distinguished at this sample size"
+        if p < 0.05
+        else "the two runs are not distinguished at this sample size"
+    )
     return (
-        f"Paired check on the {n} eval seeds both blocks ran: this repo {o_ok}/{n} "
+        f"- `lerobot/{family}_pusht`, {n} shared eval seeds: this repo {o_ok}/{n} "
         f"({o_ok / n:.1%}) against the checkpoint's own block {t_ok}/{n} ({t_ok / n:.1%}); "
         f"{n - ours_only - theirs_only} episodes agree, {ours_only} succeed only here and "
-        f"{theirs_only} only there, exact McNemar p = {p:.2f}. Mean max coverage {o_cov:.3f} "
-        f"here against {t_cov:.3f} there. The published figure is a 500-episode aggregate "
-        f"(57.0 %), so the two arms differ by 8 successes against 13 -- not a resolved gap at "
-        f"this sample size. Source: `results/vqbet_published.jsonl` "
-        f"(`scripts/vqbet_published.py`)."
+        f"{theirs_only} only there, exact McNemar p = {p:.2f}, so {verdict}. Mean coverage "
+        f"{o_cov:.3f} here against {t_cov:.3f} there (their `max_reward` is rescaled: it is "
+        f"coverage / 0.95). Their published block is {pub_ok}/{len(published)} = "
+        f"{pub_ok / len(published):.1%} over {len(published)} episodes, and these shared seeds "
+        f"are a sub-block of it. Source: `results/{family}_published.jsonl` "
+        f"(`scripts/published_blocks.py`)."
     )
 
 
@@ -395,14 +402,20 @@ def generality_table(
     diffusion_rows: list[dict[str, Any]],
     diffusion_latency: list[dict[str, Any]],
     vqbet_latency: list[dict[str, Any]],
-    published: list[dict[str, Any]] | None = None,
+    vqbet_published: list[dict[str, Any]] | None = None,
+    diffusion_paired: list[dict[str, Any]] | None = None,
+    diffusion_published: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Two policy families through one harness (docs/04 section 3, E15).
+    """Two policy families through one harness (docs/04 section 3, E0 and E15).
 
     Diffusion numbers are E0 (success, coverage) and E9 (clean batch-1 chunk time); VQ-BeT
     numbers are this repo's rows in `results/vqbet*.jsonl`. The per-control-step column is
     the fair comparison: the two checkpoints do not predict the same number of actions per
     forward pass, which is exactly what the interface has to hide.
+
+    `diffusion_paired` is E0 re-run on the *published* block's own seeds: the original E0 rows
+    sit on seeds 10000-10049, which the checkpoint's block (1000-1499) does not contain, so
+    without that re-run the diffusion column could only be compared aggregate-to-aggregate.
     """
     diffusion = [row for row in diffusion_rows if row.get("scheduler") == "ddim"]
     if not diffusion or not vqbet_rows:
@@ -417,22 +430,32 @@ def generality_table(
         "| Params M | Chunk ms (eager, batch 1) | Actions per chunk | ms per control step |",
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for label, rows, family, chunk_ms in (
-        ("lerobot/diffusion_pusht", diffusion, "diffusion", d_ms),
-        ("lerobot/vqbet_pusht", vqbet_rows, "vqbet", v_ms),
+    for label, rows, family, chunk_ms, block in (
+        ("lerobot/diffusion_pusht", diffusion, "diffusion", d_ms, diffusion_published),
+        ("lerobot/vqbet_pusht", vqbet_rows, "vqbet", v_ms, vqbet_published),
     ):
         point, lo, hi = bootstrap_ci(rows)
         cov, cov_lo, cov_hi = bootstrap_ci(rows, metric="coverage")
         acts = float(rows[0]["action_horizon"])
         params = float(rows[0]["params"]) / 1e6
+        # Prefer the pinned block over the hand-typed constant whenever it is present.
+        published_rate = (
+            sum(int(row["success"]) for row in block) / len(block)
+            if block
+            else PUBLISHED_SUCCESS[family]
+        )
         lines.append(
             f"| `{label}` | {family} | {len(rows)} | {fmt_ci(point, lo, hi)} "
-            f"| {PUBLISHED_SUCCESS[family]:.1%} | {cov:.3f} [{cov_lo:.3f}, {cov_hi:.3f}] "
+            f"| {published_rate:.1%} | {cov:.3f} [{cov_lo:.3f}, {cov_hi:.3f}] "
             f"| {params:.1f} | {chunk_ms:.1f} | {acts:.0f} | {chunk_ms / acts:.2f} |"
         )
-    note = paired_note(vqbet_rows, published or [])
-    if note:
-        lines += ["", note]
+    for family, ours, block in (
+        ("diffusion", diffusion_paired or [], diffusion_published or []),
+        ("vqbet", vqbet_rows, vqbet_published or []),
+    ):
+        note = paired_note(ours, block, family=family)
+        if note:
+            lines += ["", note]
     return "\n".join(lines) + "\n"
 
 
@@ -481,7 +504,9 @@ def main() -> None:
                 read(ROOT / "e0.jsonl"),
                 read(ROOT / "latency.jsonl"),
                 read(ROOT / "vqbet_latency.jsonl"),
-                read(ROOT / "vqbet_published.jsonl"),
+                vqbet_published=read(ROOT / "vqbet_published.jsonl"),
+                diffusion_paired=read(ROOT / "e0_published_seeds.jsonl"),
+                diffusion_published=read(ROOT / "diffusion_published.jsonl"),
             )
         )
         print(f"wrote {OUT / 'generality.md'}")

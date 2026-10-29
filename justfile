@@ -93,14 +93,19 @@ bench-serve steps="4":
 # E15: a second published policy family through the same harness (generality check).
 # VQ-BeT has no sampler steps, so --steps is ignored by its adapter; --action-horizon is
 # its own 5-action chunk.
-eval-vqbet episodes="50" seed_start="100000":
+eval-vqbet episodes="200" seed_start="100000":
     uv run python scripts/prune_results.py --path results/vqbet.jsonl --prefix vqbet_pusht_n
     uv run python scripts/evaluate.py --ckpt hf:lerobot/vqbet_pusht --config-id vqbet_pusht_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 1 --action-horizon 5 --workers 1 --out results/vqbet.jsonl
 
-# Pin the checkpoint's own per-episode eval block (500 seeds) for the E15 paired test.
-# Network only; the result is committed so `just tables` never needs it.
-vqbet-published:
-    uv run python scripts/vqbet_published.py
+# Pin both checkpoints' own per-episode eval blocks (500 seeds each) for the paired tests.
+# Network only; the results are committed so `just tables` never needs them.
+published-blocks:
+    uv run python scripts/published_blocks.py
+
+# E0 paired check: the diffusion checkpoint on the *published* block's own seeds, because
+# E0's 10000-block is not inside it and an aggregate comparison cannot be paired.
+eval-dp-published episodes="50" seed_start="1000":
+    uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 10 --out results/e0_published_seeds.jsonl
 
 # Render one episode to an annotated GIF (packaging, not a measurement).
 demo steps="4" seed="10000":

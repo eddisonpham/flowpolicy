@@ -122,8 +122,9 @@ def e0_bars(rows: list[dict[str, Any]], name: str = "e0_validation.png") -> None
         capsize=4,
         color="#dd8452",
     )
-    axes[1].axhline(0.955, ls="--", color="k", lw=1)
-    axes[1].annotate("published 0.955", (0, 0.955), xytext=(0, 4), textcoords="offset points")
+    # The model card's 0.955 is `max_reward`, i.e. coverage / 0.95 (gym-pusht `envs/pusht.py`).
+    axes[1].axhline(0.907, ls="--", color="k", lw=1)
+    axes[1].annotate("published 0.907", (0, 0.907), xytext=(0, 4), textcoords="offset points")
     axes[1].set_ylabel("mean max coverage")
     axes[1].set_ylim(0, 1.05)
     axes[1].set_title("E0: coverage, 50 paired episodes each")

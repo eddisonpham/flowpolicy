@@ -119,7 +119,7 @@ A rendered episode with the loop's own timings on the frame is in
 
 | Question | Measured answer | Source |
 |---|---|---|
-| Does the harness reproduce the published policy? | Yes: 64.0% [52.0%, 78.0%] success and 0.924 [0.878, 0.953] mean coverage over 50 paired episodes at DDIM N=10, against the model card's 65.4 % / 0.955 | E0 |
+| Does the harness reproduce the published policy? | Yes: 64.0% [52.0%, 78.0%] success and 0.924 [0.878, 0.953] mean coverage over 50 episodes at DDIM N=10, against the model card's 65.4 % success and 0.907 mean coverage (its 0.955 column is `max_reward`, i.e. coverage / 0.95) | E0 |
 | How few sampler steps still work? | 0.121 at N=1; 0.716 at N=2; 0.885 at N=4; 0.919 at N=8; 0.888 at N=10; 0.892 at N=16. The ladder is flat after N=4 (coverage intervals overlap there); chunk latency keeps growing linearly in N, in the table below | E3 |
 | What does one chunk cost at batch 1? | 73.5 ms eager / 66.8 ms graph at N=4; 190.5 ms eager / 181.0 ms graph at N=10. CUDA graphs are worth 1.05x here, against 4.7x on the 11 M ablation model. `torch.compile` runs on this repo's DDIM sampler (overhead mode): 65.6 ms at N=4 against 73.5 ms for the stock loop, i.e. 1.12x -- so compile and graphs are worth a tenth, not the 4.7x/5.8x they were worth on the 11 M ablation model: at 262.7 M parameters the network, not the launcher, is the cost | E9 |
 | Does half precision buy a control period? | No. The best half-precision configuration (bfloat16, cudagraph) cuts a chunk to 55.6 ms at N=4 from 73.4 ms in fp32 (1.32x) and to 136.7 ms at N=10 from 194.4 ms (1.42x), which is still over a 100 ms period: the deployable envelope stays N <= 4. On paired episodes bfloat16 50% [35%, 65%], float16 45% [30%, 60%], float32 35% [22%, 50%] -- overlapping, so no gross regression rather than equality | E8 |
@@ -154,7 +154,8 @@ Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/), [just](https://gith
 ### E0: the pretrained checkpoint through our harness
 
 This is a validation, not a result we own. It is also the project's reproduction check: the
-model card reports 65.4 % success and 0.955 mean max overlap over 500 episodes.
+model card reports 65.4 % success and 0.955 mean `max_reward` over 500 episodes -- which
+gym-pusht defines as `coverage / 0.95`, so the coverage it implies is 0.907.
 
 | Scheduler | N | Episodes | Success (95% CI) | Mean coverage (95% CI) | Mean chunk latency ms |
 |---|---|---|---|---|---|
@@ -362,18 +363,21 @@ touched.
 | Checkpoint | Family | Episodes | Success (95% CI) | Published | Mean coverage (95% CI) | Params M | Chunk ms (eager, batch 1) | Actions per chunk | ms per control step |
 |---|---|---|---|---|---|---|---|---|---|
 | `lerobot/diffusion_pusht` | diffusion | 50 | 64.0% [52.0%, 78.0%] | 65.4% | 0.924 [0.878, 0.953] | 262.7 | 73.5 | 8 | 9.19 |
-| `lerobot/vqbet_pusht` | vqbet | 50 | 54.0% [40.0%, 68.0%] | 57.0% | 0.851 [0.790, 0.905] | 37.5 | 9.2 | 5 | 1.83 |
+| `lerobot/vqbet_pusht` | vqbet | 200 | 54.0% [47.0%, 61.0%] | 57.0% | 0.818 [0.779, 0.853] | 37.5 | 9.2 | 5 | 1.83 |
 
-Paired check on the 50 eval seeds both blocks ran: this repo 27/50 (54.0%) against the checkpoint's own block 32/50 (64.0%); 29 episodes agree, 8 succeed only here and 13 only there, exact McNemar p = 0.38. Mean max coverage 0.851 here against 0.842 there. The published figure is a 500-episode aggregate (57.0 %), so the two arms differ by 8 successes against 13 -- not a resolved gap at this sample size. Source: `results/vqbet_published.jsonl` (`scripts/vqbet_published.py`).
+- `lerobot/diffusion_pusht`, 50 shared eval seeds: this repo 32/50 (64.0%) against the checkpoint's own block 37/50 (74.0%); 27 episodes agree, 9 succeed only here and 14 only there, exact McNemar p = 0.40, so the two runs are not distinguished at this sample size. Mean coverage 0.914 here against 0.913 there (their `max_reward` is rescaled: it is coverage / 0.95). Their published block is 327/500 = 65.4% over 500 episodes, and these shared seeds are a sub-block of it. Source: `results/diffusion_published.jsonl` (`scripts/published_blocks.py`).
+
+- `lerobot/vqbet_pusht`, 200 shared eval seeds: this repo 108/200 (54.0%) against the checkpoint's own block 113/200 (56.5%); 107 episodes agree, 44 succeed only here and 49 only there, exact McNemar p = 0.68, so the two runs are not distinguished at this sample size. Mean coverage 0.818 here against 0.780 there (their `max_reward` is rescaled: it is coverage / 0.95). Their published block is 285/500 = 57.0% over 500 episodes, and these shared seeds are a sub-block of it. Source: `results/vqbet_published.jsonl` (`scripts/published_blocks.py`).
 
 Reading it: the harness reproduces the second checkpoint's published band (54 % against
 57 %) and prices it at a fifth of the diffusion policy's cost per control step, without any
-code knowing which family it was holding. The checkpoint ships its per-episode eval block,
-so that comparison is paired rather than hand-waved: on the 50 seeds both ran it is 27/50
-against 32/50, 8 episodes succeed only here and 13 only there (exact McNemar p = 0.38), and
-mean max coverage is 0.851 against 0.842. Fifty episodes cannot order the two runs, and the
-table says so instead of claiming either a match or a gap. The point of the experiment is
-the seam, not the checkpoint.
+code knowing which family it was holding. Both checkpoints ship a per-episode eval block, so
+both comparisons are paired rather than hand-waved, and the two bullets under the table are
+those tests: 108/200 against 113/200 for VQ-BeT (p = 0.68) and 32/50 against 37/50 for
+diffusion (p = 0.40). Neither block orders the two runs, so the honest reading is that this
+harness neither flatters nor damages the checkpoints it holds. The one column that does
+separate them is coverage, where this repo sits slightly higher on both (0.818 against 0.780,
+0.914 against 0.913). The point of the experiment is the seam, not the checkpoint.
 
 ## Ablation: what we tried first
 
@@ -429,6 +433,7 @@ Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 | `just eval-e10` | latency injection + async chunking, 270 episodes | ~75 min |
 | `just bench-stack` | E14: published vs stock vs fast sampler, latency + episodes/hour | ~25 min |
 | `just bench-precision` | E8: fp32 vs bf16 vs fp16, latency ladder + 40 paired episodes each | ~20 min |
+| `just eval-vqbet` | E15: 200 episodes of a second policy family through the same harness | ~7 min |
 | `just bench-serve` | load-test the HTTP boundary (client vs server latency) | ~2 min |
 | `just bench-paced 4` | wall-clock paced loop at one step count (12 episodes) | ~7 min |
 | `just demo` | render one episode to an annotated GIF (`results/figures/demo_rollout.gif`) | ~1 min |

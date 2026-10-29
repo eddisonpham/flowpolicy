@@ -64,8 +64,11 @@ def test_e0_answer_uses_only_the_ddim_row() -> None:
     _, answer, source = headline_rows(rows)[0]
     assert source == "E0"
     assert "100.0%" in answer
-    assert "50 paired episodes" in answer
+    assert "50 episodes" in answer
     assert "0.900" in answer
+    # The model card's 0.955 is `max_reward` (coverage / 0.95), so the answer may not print it
+    # as though it were comparable to our coverage column.
+    assert "0.955 column is `max_reward`" in answer
 
 
 def test_e3_lists_every_step_count() -> None:

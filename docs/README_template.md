@@ -120,7 +120,8 @@ Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/), [just](https://gith
 ### E0: the pretrained checkpoint through our harness
 
 This is a validation, not a result we own. It is also the project's reproduction check: the
-model card reports 65.4 % success and 0.955 mean max overlap over 500 episodes.
+model card reports 65.4 % success and 0.955 mean `max_reward` over 500 episodes -- which
+gym-pusht defines as `coverage / 0.95`, so the coverage it implies is 0.907.
 
 {{E0_TABLE}}
 
@@ -260,12 +261,13 @@ touched.
 
 Reading it: the harness reproduces the second checkpoint's published band (54 % against
 57 %) and prices it at a fifth of the diffusion policy's cost per control step, without any
-code knowing which family it was holding. The checkpoint ships its per-episode eval block,
-so that comparison is paired rather than hand-waved: on the 50 seeds both ran it is 27/50
-against 32/50, 8 episodes succeed only here and 13 only there (exact McNemar p = 0.38), and
-mean max coverage is 0.851 against 0.842. Fifty episodes cannot order the two runs, and the
-table says so instead of claiming either a match or a gap. The point of the experiment is
-the seam, not the checkpoint.
+code knowing which family it was holding. Both checkpoints ship a per-episode eval block, so
+both comparisons are paired rather than hand-waved, and the two bullets under the table are
+those tests: 108/200 against 113/200 for VQ-BeT (p = 0.68) and 32/50 against 37/50 for
+diffusion (p = 0.40). Neither block orders the two runs, so the honest reading is that this
+harness neither flatters nor damages the checkpoints it holds. The one column that does
+separate them is coverage, where this repo sits slightly higher on both (0.818 against 0.780,
+0.914 against 0.913). The point of the experiment is the seam, not the checkpoint.
 
 ## Ablation: what we tried first
 
@@ -306,6 +308,7 @@ Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 | `just eval-e10` | latency injection + async chunking, 270 episodes | ~75 min |
 | `just bench-stack` | E14: published vs stock vs fast sampler, latency + episodes/hour | ~25 min |
 | `just bench-precision` | E8: fp32 vs bf16 vs fp16, latency ladder + 40 paired episodes each | ~20 min |
+| `just eval-vqbet` | E15: 200 episodes of a second policy family through the same harness | ~7 min |
 | `just bench-serve` | load-test the HTTP boundary (client vs server latency) | ~2 min |
 | `just bench-paced 4` | wall-clock paced loop at one step count (12 episodes) | ~7 min |
 | `just demo` | render one episode to an annotated GIF (`results/figures/demo_rollout.gif`) | ~1 min |

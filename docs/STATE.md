@@ -6,7 +6,7 @@
 | Current step id | none (evals complete: E0, E3, E3-replication, E8, E9, E10, E12, E14, serving load, paced loop; rename to `policybench` complete) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
 | Last completed step | rename `flowpolicy` -> `policybench` (2026-10-28), after M9.7 |
-| Evidence | `just test` green (2026-10-28: ruff, ruff format, mypy strict on 26 files, 57 CPU unit tests, 1 smoke test); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
+| Evidence | `just test` green (2026-10-29: ruff, ruff format, mypy strict on 27 files, 61 CPU unit tests, 1 smoke test); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
 ## What changed on 2026-10-28 (E15: a second policy family, and the architecture page)
@@ -24,14 +24,26 @@ Measured: 54.0 % [40.0 %, 68.0 %] success and 0.851 [0.790, 0.905] coverage agai
 checkpoint's published 57.0 % over 500 episodes. 9.2 ms per chunk eager at batch 1 (199 MiB
 peak), 1.83 ms per control step against the diffusion checkpoint's 9.19.
 
-**Corrected the same day: the "10 pp gap" was not a gap.** The checkpoint ships
-`eval_info.json` with one row per episode, so the comparison is now paired instead of
-asserted: on the 50 shared seeds, 27/50 here against 32/50 there, 29 episodes agreeing, 8
-succeeding only here and 13 only there, exact McNemar p = 0.38 -- unresolved at this sample
-size. Mean max coverage 0.851 against 0.842. The earlier "4 pp coverage gap" was a units
-error (gym-pusht reports `reward = clip(coverage / 0.95, 0, 1)`, so the published
-`max_reward` column is not coverage). `scripts/vqbet_published.py` pins that block to
-`results/vqbet_published.jsonl`; `results/tables/generality.md` prints the test under the row.
+**Corrected, then resolved at a real sample size.** The first version of this entry reported a
+"10 pp success gap" against the checkpoint's block. It was wrong twice over: gym-pusht reports
+`reward = clip(coverage / 0.95, 0, 1)`, so the published `max_reward` column is coverage
+divided by 0.95 (the "4 pp coverage gap" was that scaling), and the 50-episode paired test
+could not order the runs anyway (8 vs 13 discordant, p = 0.38).
+
+Both half-fixes were then measured properly on 2026-10-29:
+
+- **VQ-BeT, 200 shared seeds** (`results/vqbet.jsonl`, seeds 100000-100199): 108/200
+  (54.0 % [47.0 %, 61.0 %]) against the checkpoint's own 113/200 (56.5 %), 107 agreeing, 44
+  succeeding only here and 49 only there, exact McNemar p = 0.68. Mean coverage 0.818 against
+  0.780. The two runs are not distinguished.
+- **Diffusion, 50 shared seeds** (`results/e0_published_seeds.jsonl`, seeds 1000-1049, which
+  are inside the checkpoint's block and the original E0 block is not): 32/50 (64.0 %) against
+  37/50 (74.0 %), 27 agreeing, 9 vs 14, exact McNemar p = 0.40. Coverage 0.914 against 0.913 --
+  i.e. E0's coverage matches the card exactly once the units are right (the card's 0.955 is
+  `max_reward`, so the coverage it implies is 0.907).
+- `scripts/published_blocks.py` (`just published-blocks`) pins both blocks to
+  `results/{vqbet,diffusion}_published.jsonl`; `results/tables/generality.md` prints both tests,
+  and `make_tables` derives the verdict from p rather than asserting it.
 
 Also in this pass: `docs/ARCHITECTURE.md` (one page: layers, seams, invariants, extension
 points), the README subtitle and `docs/MODEL_CARD.md` now state the deployment-cost framing
@@ -172,8 +184,10 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   4 unit tests on those transforms; `hf:<repo_id>` accepted by `evaluate.py`,
   `deploy_eval.py` and `latency.py`.
 - **E0 (validation gate)**: 64.0 % success (32/50) and 0.924 mean coverage at DDIM N=10,
-  against the model card's 65.4 % / 0.955. `results/e0.jsonl`,
-  `results/tables/e0_validation.md`. This is the project's reproduction check.
+  against the model card's 65.4 % / 0.907 coverage. `results/e0.jsonl`,
+  `results/tables/e0_validation.md`. Paired on the block's own seeds (1000-1049) it is 32/50
+  against 37/50, p = 0.40, coverage 0.914 against 0.913 (`results/e0_published_seeds.jsonl`).
+  This is the project's reproduction check.
 - **Latency at the operating point** (batch 1, fp32, single process, measured before the
   eval runs): 20.7 ms at N=1, 178.3 ms at N=10, 1766.6 ms at N=100. Peak VRAM 1125 MiB.
 - **E3 (DDIM ladder, 300 episodes)**: coverage 0.121 [0.076, 0.165] at N=1, 0.716 [0.627,
