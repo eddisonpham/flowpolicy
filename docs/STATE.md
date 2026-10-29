@@ -9,6 +9,27 @@
 | Evidence | `just test` green (2026-10-28: ruff, ruff format, mypy strict on 26 files, 57 CPU unit tests, 1 smoke test); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
+## What changed on 2026-10-28 (clean-clone dry run, and the CI dependency it found)
+
+The README quickstart was executed in a fresh `git clone` of `7a0792a` in a temp directory, in
+order, with no edits:
+
+| Step | Result |
+|---|---|
+| `uv sync --python 3.12` | exit 0, 97 packages, `policybench` installed editable |
+| `just test` | 57 passed (18.5 s cold) |
+| `just smoke` | 1 passed |
+| `just tables && just figures && just readme` | exit 0, `git diff --exit-code` clean |
+| `just setup-pretrained` | exit 0, lerobot 0.6.1 imports, torch stays 2.14.1+cu130 |
+| `just doctor` | 6 PASS (python, cuda, sim, lockfile, backend, checkpoint), 2 NOT RUN (dataset, MSVC) |
+| `just report` | exit 0, headline table |
+| `scripts/evaluate.py`, 2 episodes (stand-in for `just eval-e0`) | exit 0, coverage 0.942, success 1/2 |
+
+Nothing broke -- but only after the `diffusers` fix earlier in this session: on the pre-fix tree
+a clean `uv sync` leaves `just test` unable to collect, which is exactly what CI's `unit` job
+runs. Not exercised: the full 100-episode `just eval-e0` (~50 min), `just data` and the ablation
+path, `just test-local`, `just serve` (blocks), `just gates`.
+
 ## What changed on 2026-10-28 (renamed to PolicyBench)
 
 The package and project name now say what the repository does. The old name described the

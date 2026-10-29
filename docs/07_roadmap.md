@@ -101,9 +101,13 @@ LinkedIn series (3-4 posts): problem and approach; architecture; what broke (a r
 
 ## 4. Acceptance criteria for the whole plan
 
-- [ ] A fresh agent can run M0 and M1 from these docs without further research. **Not met as
-  written:** M1 needs `gym-pusht` data and an HF download, and the doc still describes the
-  Ubuntu path; `docs/STATE.md` and `docs/02` carry the Windows facts instead. A clean-clone dry
-  run would be the honest check and has not been done.
+- [ ] A fresh agent can run M0 and M1 from these docs without further research. **Partly met
+  (dry run 2026-10-28):** a clean clone of `7a0792a` followed the README quickstart unchanged --
+  `uv sync --python 3.12`, `just test` (57 passed), `just smoke`, `just setup-pretrained`,
+  `just doctor` (6 PASS / 2 NOT RUN, as documented), `just tables && just figures && just readme`
+  with a clean `git diff --exit-code`, `just report`, and a 2-episode E0 through the pretrained
+  loader. Still not met as written: M1 needs `just data` (not exercised), the 100-episode
+  `just eval-e0` was not run, and the doc still describes the Ubuntu path while `docs/STATE.md`
+  and `docs/02` carry the Windows facts.
 - [x] Every open decision in [06](06_decisions_and_risks.md) has a recommendation and a trigger that changes it. D1-D11 all carry a `CHOSEN` entry with a date and a "what would change it" cell; R1-R14 carry kill/fallback triggers.
 - [x] The experiment matrix in [04](04_eval_and_experiments.md) has compute filled after M2. Every row carries either measured GPU time or `not run` with the reason (G8 NOT RUN, D1); E14 was added 2026-10-28 with its own compute column.

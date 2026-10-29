@@ -58,7 +58,10 @@ def _backend() -> str:
             )
     import lerobot
 
-    return f"lerobot {lerobot.__version__} + diffusers (installed outside the lockfile)"
+    return (
+        f"lerobot {lerobot.__version__} + diffusers "
+        "(lerobot installed outside the lockfile; diffusers is locked in dev)"
+    )
 
 
 def _lock() -> str:
