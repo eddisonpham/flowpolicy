@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from flowpolicy.kernels.fused_euler import HAS_TRITON, fused_euler_denorm, reference_euler_denorm
+from policybench.kernels.fused_euler import HAS_TRITON, fused_euler_denorm, reference_euler_denorm
 
 pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 

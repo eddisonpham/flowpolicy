@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from flowpolicy.models.policies import PolicyLike
+from policybench.models.policies import PolicyLike
 
 
 def static_obs(policy: PolicyLike, device: str, batch: int = 1) -> dict[str, torch.Tensor]:

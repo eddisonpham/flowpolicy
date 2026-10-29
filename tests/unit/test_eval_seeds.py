@@ -1,6 +1,6 @@
 import pytest
 
-from flowpolicy.eval.metrics import assert_seed_disjoint
+from policybench.eval.metrics import assert_seed_disjoint
 
 pytestmark = pytest.mark.unit
 

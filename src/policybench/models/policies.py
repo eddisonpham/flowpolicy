@@ -14,10 +14,10 @@ from typing import Any, Protocol, cast
 import torch
 from torch import Tensor, nn
 
-from flowpolicy.config import ModelConfig
-from flowpolicy.data.normalizer import Normalizer, Stats
-from flowpolicy.models.encoders import MultiFrameEncoder
-from flowpolicy.models.heads import ConditionalUnet1D, TransformerChunkHead
+from policybench.config import ModelConfig
+from policybench.data.normalizer import Normalizer, Stats
+from policybench.models.encoders import MultiFrameEncoder
+from policybench.models.heads import ConditionalUnet1D, TransformerChunkHead
 
 
 class PolicyLike(Protocol):

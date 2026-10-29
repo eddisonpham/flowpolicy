@@ -4,9 +4,9 @@ import pytest
 import torch
 from torch import nn
 
-from flowpolicy.config import ModelConfig
-from flowpolicy.data.normalizer import Stats
-from flowpolicy.models.policies import build_policy
+from policybench.config import ModelConfig
+from policybench.data.normalizer import Stats
+from policybench.models.policies import build_policy
 
 STATS = Stats(
     state_min=[0.0, 0.0],

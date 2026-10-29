@@ -286,7 +286,7 @@ wheels = [
 ]
 
 [[package]]
-name = "flowpolicy"
+name = "policybench"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [

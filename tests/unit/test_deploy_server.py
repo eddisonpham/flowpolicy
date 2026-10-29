@@ -18,7 +18,7 @@ import pytest
 import torch
 from torch import Tensor
 
-from flowpolicy.deploy.server import PolicyServer
+from policybench.deploy.server import PolicyServer
 
 pytestmark = pytest.mark.unit
 

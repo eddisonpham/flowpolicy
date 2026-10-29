@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from flowpolicy.data.window import WindowDataset, ZarrArrays, random_crop, split_episodes
+from policybench.data.window import WindowDataset, ZarrArrays, random_crop, split_episodes
 
 pytestmark = pytest.mark.unit
 
@@ -91,7 +91,7 @@ def test_get_batch_applies_crop_only_when_asked():
 
 
 def test_action_horizon_bigger_than_pred_horizon_is_rejected():
-    from flowpolicy.config import TrainConfig
+    from policybench.config import TrainConfig
 
     cfg = TrainConfig()
     cfg.data.action_horizon = cfg.data.pred_horizon + 1

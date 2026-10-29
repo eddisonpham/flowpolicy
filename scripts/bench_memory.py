@@ -13,10 +13,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from flowpolicy.config import ModelConfig
-from flowpolicy.data.normalizer import Stats
-from flowpolicy.data.window import load_zarr, split_episodes
-from flowpolicy.models.policies import build_policy
+from policybench.config import ModelConfig
+from policybench.data.normalizer import Stats
+from policybench.data.window import load_zarr, split_episodes
+from policybench.models.policies import build_policy
 
 
 def main() -> None:

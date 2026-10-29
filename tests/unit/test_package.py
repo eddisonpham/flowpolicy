@@ -6,14 +6,14 @@ arrive with the code they cover.
 
 import pytest
 
-import flowpolicy
+import policybench
 
 pytestmark = pytest.mark.unit
 
 
 def test_version_is_a_release_string() -> None:
-    assert isinstance(flowpolicy.__version__, str)
-    assert flowpolicy.__version__.count(".") >= 1
+    assert isinstance(policybench.__version__, str)
+    assert policybench.__version__.count(".") >= 1
 
 
 def test_version_matches_pyproject() -> None:
@@ -23,4 +23,4 @@ def test_version_matches_pyproject() -> None:
     root = pathlib.Path(__file__).resolve().parents[2]
     with (root / "pyproject.toml").open("rb") as fh:
         pyproject = tomllib.load(fh)
-    assert pyproject["project"]["version"] == flowpolicy.__version__
+    assert pyproject["project"]["version"] == policybench.__version__

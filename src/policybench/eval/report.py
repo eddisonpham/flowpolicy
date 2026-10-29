@@ -15,7 +15,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from flowpolicy.eval.metrics import bootstrap_ci, group_rows
+from policybench.eval.metrics import bootstrap_ci, group_rows
 
 Row = dict[str, Any]
 

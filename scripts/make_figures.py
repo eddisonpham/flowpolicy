@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from flowpolicy.eval.metrics import bootstrap_ci, group_rows
+from policybench.eval.metrics import bootstrap_ci, group_rows
 
 ROOT = Path("results")
 OUT = ROOT / "figures"

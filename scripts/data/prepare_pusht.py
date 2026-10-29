@@ -19,8 +19,8 @@ import numpy as np
 import pyarrow.parquet as pq
 import zarr
 
-from flowpolicy.data.normalizer import Stats
-from flowpolicy.data.window import load_zarr, split_episodes
+from policybench.data.normalizer import Stats
+from policybench.data.window import load_zarr, split_episodes
 
 REPO = "lerobot/pusht"
 BASE = f"https://huggingface.co/datasets/{REPO}/resolve/main"

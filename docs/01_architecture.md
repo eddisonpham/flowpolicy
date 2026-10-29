@@ -53,12 +53,12 @@ Env interface (sim and wrappers): Gymnasium-style `reset(seed)`, `step(action)`;
 ## 3. Repository layout (minimal)
 
 ```
-flowpolicy/
+policybench/
   pyproject.toml uv.lock justfile README.md AGENTS.md
   conf/                      # Hydra: model/ data/ train/ eval/ experiment/
-  src/flowpolicy/
+  src/policybench/
     data/ envs/ models/{encoders,heads,policies}/ training/ eval/ kernels/ deploy/
-  ros2_ws/src/flowpolicy_node/
+  ros2_ws/src/policybench_node/
   scripts/{gates,make_figures.py,make_tables.py}
   tests/{unit,integration,gpu}/
   docs/  results/  docker/  .github/workflows/ci.yml

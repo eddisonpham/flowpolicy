@@ -38,9 +38,9 @@ from typing import Any
 import numpy as np
 import torch
 
-from flowpolicy.eval.latency import benchmark
-from flowpolicy.eval.metrics import bootstrap_ci
-from flowpolicy.eval.rollout import evaluate, load_policy
+from policybench.eval.latency import benchmark
+from policybench.eval.metrics import bootstrap_ci
+from policybench.eval.rollout import evaluate, load_policy
 
 DEFAULT_HF_ID = "lerobot/diffusion_pusht"
 DTYPES = ("float32", "bfloat16", "float16")

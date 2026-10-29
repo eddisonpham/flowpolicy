@@ -3,7 +3,8 @@
 Status: Stage 1 draft. Written 2026-10-18. **Pivoted 2026-10-27 (D11): the stack now runs
 a pretrained checkpoint and the from-scratch models are an ablation.** See
 [CHANGELOG](CHANGELOG.md) and the deviations log in [04](04_eval_and_experiments.md).
-Source of truth for scope: the FlowPolicy Agent Brief. This file restates it, then records what Stage 1 research changed.
+Source of truth for scope: the uploaded Agent Brief, still kept verbatim under its original name in
+`flowpolicy_complete/`. This file restates it, then records what Stage 1 research changed.
 
 ---
 

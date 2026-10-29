@@ -12,8 +12,8 @@ from pathlib import Path
 
 import torch
 
-from flowpolicy.eval.rollout import load_policy
-from flowpolicy.kernels.fused_euler import HAS_TRITON, fused_euler_denorm, reference_euler_denorm
+from policybench.eval.rollout import load_policy
+from policybench.kernels.fused_euler import HAS_TRITON, fused_euler_denorm, reference_euler_denorm
 
 
 def main() -> None:

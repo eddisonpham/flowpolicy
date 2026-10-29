@@ -36,7 +36,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from flowpolicy.models.policies import PolicyLike
+from policybench.models.policies import PolicyLike
 
 __all__ = ["PolicyServer", "build_obs", "serve"]
 

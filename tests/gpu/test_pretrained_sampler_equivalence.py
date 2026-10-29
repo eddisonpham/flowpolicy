@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 import torch
 
-from flowpolicy.envs.pusht import PushTEnv
-from flowpolicy.eval.rollout import _obs_batch, load_policy
+from policybench.envs.pusht import PushTEnv
+from policybench.eval.rollout import _obs_batch, load_policy
 
 pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 

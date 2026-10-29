@@ -1,6 +1,6 @@
 """Measure the serving boundary (docs/05 section 3): throughput, tail, and HTTP overhead.
 
-`flowpolicy.deploy.server` is a real process boundary with a real contract, and until now it
+`policybench.deploy.server` is a real process boundary with a real contract, and until now it
 had only been *correctness*-tested (six socket tests on CPU) and never load-tested. This
 script answers the three questions a serving boundary has to answer:
 

@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from flowpolicy.deploy.control_loop import LoopConfig, run_episode
-from flowpolicy.eval.rollout import assert_seed_disjoint, load_policy
+from policybench.deploy.control_loop import LoopConfig, run_episode
+from policybench.eval.rollout import assert_seed_disjoint, load_policy
 
 
 def main() -> None:

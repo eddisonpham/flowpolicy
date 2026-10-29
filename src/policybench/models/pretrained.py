@@ -3,7 +3,7 @@
 The checkpoint is `lerobot/diffusion_pusht` (Apache-2.0): Diffusion Policy trained on
 gym-pusht with n_obs_steps=2, horizon=16, n_action_steps=8 -- the same observation
 horizon and action chunk this repo uses, and the same environment and success metric
-(max overlap >= 95 %) that `flowpolicy.envs.pusht` measures.
+(max overlap >= 95 %) that `policybench.envs.pusht` measures.
 
 Model code is the `lerobot` package's. What this module owns is the glue, because the
 2024 checkpoint and the 2026 library disagree about where normalization lives:
@@ -26,7 +26,7 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
-from flowpolicy.models.fast_sampler import DDIMCoefficients, ddim_coefficients, ddim_sample
+from policybench.models.fast_sampler import DDIMCoefficients, ddim_coefficients, ddim_sample
 
 DEFAULT_HF_ID = "lerobot/diffusion_pusht"
 
@@ -121,7 +121,7 @@ class PretrainedDiffusionPolicy(nn.Module):
 
     - "stock": lerobot -> diffusers `DDIMScheduler.step` per step. The reference path, and
       the one this repo's E0 reproduction was measured with.
-    - "fast": `flowpolicy.models.fast_sampler`, which precomputes the DDIM scalars on the
+    - "fast": `policybench.models.fast_sampler`, which precomputes the DDIM scalars on the
       device and keeps the loop in tensor math. Numerically the same sampler (checked
       against diffusers in tests/unit/test_fast_sampler.py), but compilable and capturable
       because it has no host-side scalar math. This is what makes `torch.compile` and

@@ -6,12 +6,12 @@ recipe that produces them, never as zeros.
 
 from __future__ import annotations
 
-from flowpolicy.eval.report import RESULT_FILES, headline_rows, inventory, load_results
+from policybench.eval.report import RESULT_FILES, headline_rows, inventory, load_results
 
 
 def main() -> None:
     results = load_results()
-    print("FlowPolicy results (every number generated from results/*.jsonl)\n")
+    print("PolicyBench results (every number generated from results/*.jsonl)\n")
     for question, answer, source in headline_rows(results):
         print(f"{source:>4s}  {question}")
         print(f"      {answer}\n")

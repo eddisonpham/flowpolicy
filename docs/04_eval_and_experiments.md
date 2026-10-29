@@ -105,7 +105,7 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   recorded cause (Inductor wanting MSVC for a CPU partition created by the checkpoint's DDIM
   scheduler) was correct, but the fix was not in the environment: `diffusers` keeps
   `alphas_cumprod` on the host, so the loop blended host scalars into CUDA math and needed a
-  C++ compiler for it. `src/flowpolicy/models/fast_sampler.py` precomputes the coefficients
+  C++ compiler for it. `src/policybench/models/fast_sampler.py` precomputes the coefficients
   on-device and keeps the loop tensor-only, which removes both the partition and the per-step
   host/device synchronization. That sampler is proven equal to `diffusers` at five step counts
   and two beta schedules (`tests/unit/test_fast_sampler.py`).

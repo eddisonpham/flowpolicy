@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from flowpolicy.eval.metrics import bootstrap_ci, group_rows
-from flowpolicy.eval.report import headline_table
+from policybench.eval.metrics import bootstrap_ci, group_rows
+from policybench.eval.report import headline_table
 
 ROOT = Path("results")
 ABLATION = ROOT / "ablation"

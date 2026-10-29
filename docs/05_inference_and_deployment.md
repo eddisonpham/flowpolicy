@@ -32,7 +32,7 @@ indexes it with a Python int per step, so the denoising loop contained 10 host s
 into CUDA tensor math. That produces (a) one host/device synchronization per step and (b) a CPU
 partition in the Inductor graph, which is why a C++ compiler was wanted at all.
 
-`src/flowpolicy/models/fast_sampler.py` fixes the cause: the DDIM coefficients are precomputed
+`src/policybench/models/fast_sampler.py` fixes the cause: the DDIM coefficients are precomputed
 once on the sampling device and the loop is tensor-only. It is the same sampler -- equality with
 `diffusers` is checked at five step counts and two beta schedules in
 `tests/unit/test_fast_sampler.py` -- and it is now a single graph, so `torch.compile` and
@@ -127,7 +127,7 @@ Fallback (record as ADR if used): plain Python fixed-rate loop with the same `Po
 ## 3. Serving the policy locally (2026-10-27)
 
 ROS 2 is unavailable on this host (D7), so the plain-Python fallback now includes the serving
-half of the two-node design: `flowpolicy.deploy.server`, started with `just serve`.
+half of the two-node design: `policybench.deploy.server`, started with `just serve`.
 
 ```bash
 just serve                                     # hf:lerobot/diffusion_pusht, DDIM N=10, port 8000

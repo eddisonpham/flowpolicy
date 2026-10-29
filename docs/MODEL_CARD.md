@@ -32,7 +32,7 @@ is one checkpoint on one simulated task.
 | Field | Value |
 |---|---|
 | What it provides | parallel rollout harness, success/coverage metrics with bootstrap intervals, batch-1 latency protocol, fixed-rate control loop with latency injection, temporal ensembling, JSONL-to-table/figure/README generators |
-| Policy interface | `flowpolicy.models.policies.PolicyLike` (`obs_horizon`, `pred_horizon`, `action_dim`, `predict_chunk(obs, **sampler_kw)`, `num_parameters()`) |
+| Policy interface | `policybench.models.policies.PolicyLike` (`obs_horizon`, `pred_horizon`, `action_dim`, `predict_chunk(obs, **sampler_kw)`, `num_parameters()`) |
 | Adapters | `PretrainedDiffusionPolicy` (HF checkpoint, own normalization) and `BasePolicy` (trained checkpoints, from-scratch ablation) |
 | Reproduced reference | E0: 64.0 % success (32/50, 95 % CI [52.0 %, 78.0 %]) and 0.924 mean coverage at DDIM N=10, against the model card's 65.4 % / 0.955 |
 | Environment | gym-pusht 0.1.8, 96x96, horizon 300 steps, success = max coverage >= 95 % |

@@ -10,8 +10,8 @@ from pathlib import Path
 
 import torch
 
-from flowpolicy.eval.latency import benchmark
-from flowpolicy.eval.rollout import load_policy
+from policybench.eval.latency import benchmark
+from policybench.eval.rollout import load_policy
 
 
 def _warn_if_no_msvc() -> None:

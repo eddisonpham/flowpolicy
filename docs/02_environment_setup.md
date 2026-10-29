@@ -112,7 +112,7 @@ Two consequences worth knowing before debugging anything:
 
 - lerobot 0.6.1 does not create the `normalize_inputs` / `unnormalize_outputs` modules this
   2024 checkpoint was saved with, so `from_pretrained` reports those eight tensors as
-  unexpected keys and drops them. `flowpolicy.models.pretrained` reads them out of
+  unexpected keys and drops them. `policybench.models.pretrained` reads them out of
   `model.safetensors` and applies them. That glue is the one place a silent error still
   produces a plausible-looking policy, which is why E0 exists as a gate.
 - The checkpoint (about 1.05 GB, 262.7 M parameters, fp32) downloads to
@@ -146,7 +146,7 @@ nvidia-smi
 
 ```bash
 # Install uv if missing (see https://docs.astral.sh/uv/ ; version TBD)
-mkdir flowpolicy && cd flowpolicy
+mkdir policybench && cd policybench
 uv init --python 3.12
 # Install PyTorch from the cu130 index. Pins from the PyTorch 2.14 release thread.
 uv add "torch==2.14.1" "torchvision==0.29.1" \

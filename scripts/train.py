@@ -14,10 +14,10 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from flowpolicy.config import TrainConfig
-from flowpolicy.data.normalizer import Stats
-from flowpolicy.data.window import WindowDataset, load_zarr, split_episodes
-from flowpolicy.training.trainer import Trainer
+from policybench.config import TrainConfig
+from policybench.data.normalizer import Stats
+from policybench.data.window import WindowDataset, load_zarr, split_episodes
+from policybench.training.trainer import Trainer
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="train")

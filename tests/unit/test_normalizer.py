@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from flowpolicy.data.normalizer import Normalizer, Stats
+from policybench.data.normalizer import Normalizer, Stats
 
 pytestmark = pytest.mark.unit
 

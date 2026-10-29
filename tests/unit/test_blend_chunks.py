@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from flowpolicy.deploy.control_loop import blend_chunks
+from policybench.deploy.control_loop import blend_chunks
 
 pytestmark = pytest.mark.unit
 

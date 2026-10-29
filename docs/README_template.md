@@ -1,4 +1,4 @@
-# FlowPolicy
+# PolicyBench
 
 **A measurement and deployment stack for a visuomotor policy -- and a worked answer to the
 question every robotics inference repo skips: what does a working policy cost to run?**
@@ -29,13 +29,13 @@ Pretrained rows: 2026-10-27/28. Ablation rows: 2026-10-19 to 2026-10-24.
 
 | Component | What it does | Where |
 |---|---|---|
-| Policy interface | `PolicyLike` protocol (`obs_horizon`, `pred_horizon`, `action_dim`, `predict_chunk`, `num_parameters`); the HF checkpoint and the from-scratch models both satisfy it | `src/flowpolicy/models/` |
-| Adapter | loads `lerobot/diffusion_pusht`, restores the normalization statistics the current `lerobot` release drops, guesses nothing | `src/flowpolicy/models/pretrained.py` |
-| Fast sampler | DDIM with coefficients precomputed on-device, so the denoising loop is one graph that compiles and captures; verified equal to `diffusers` | `src/flowpolicy/models/fast_sampler.py` |
-| Rollout harness | parallel episode workers, fixed eval seeds, per-episode JSONL, bootstrap intervals over episodes/seeds | `src/flowpolicy/eval/` |
-| Latency protocol | batch-1, 50 warmup + 200 timed calls, eager / CUDA-graph / `torch.compile` | `src/flowpolicy/eval/latency.py` |
-| Control loop | fixed period, action queue, injected observation latency with jitter, deadline-miss accounting, naive vs temporal ensembling | `src/flowpolicy/deploy/control_loop.py` |
-| Serving boundary | stdlib-only HTTP endpoint with a documented JSON contract, so the measured latency is something a client can actually use | `src/flowpolicy/deploy/server.py` |
+| Policy interface | `PolicyLike` protocol (`obs_horizon`, `pred_horizon`, `action_dim`, `predict_chunk`, `num_parameters`); the HF checkpoint and the from-scratch models both satisfy it | `src/policybench/models/` |
+| Adapter | loads `lerobot/diffusion_pusht`, restores the normalization statistics the current `lerobot` release drops, guesses nothing | `src/policybench/models/pretrained.py` |
+| Fast sampler | DDIM with coefficients precomputed on-device, so the denoising loop is one graph that compiles and captures; verified equal to `diffusers` | `src/policybench/models/fast_sampler.py` |
+| Rollout harness | parallel episode workers, fixed eval seeds, per-episode JSONL, bootstrap intervals over episodes/seeds | `src/policybench/eval/` |
+| Latency protocol | batch-1, 50 warmup + 200 timed calls, eager / CUDA-graph / `torch.compile` | `src/policybench/eval/latency.py` |
+| Control loop | fixed period, action queue, injected observation latency with jitter, deadline-miss accounting, naive vs temporal ensembling | `src/policybench/deploy/control_loop.py` |
+| Serving boundary | stdlib-only HTTP endpoint with a documented JSON contract, so the measured latency is something a client can actually use | `src/policybench/deploy/server.py` |
 | Generators | every table, figure and this README are rebuilt from `results/*.jsonl`; CI fails if they go stale | `scripts/` |
 
 ## Stack
@@ -168,7 +168,7 @@ launch-bound, so launch-overhead work does not transfer. This ladder runs on the
 `lerobot` -> `diffusers` sampler, the same path E0 and E3 were measured with. The
 `torch.compile` column lives in E14 rather than here because compiling the stock path needed
 a C++ CPU partition (MSVC) that the from-scratch models never touched: this repo's DDIM
-sampler in `src/flowpolicy/models/fast_sampler.py` removes that partition, which is what makes
+sampler in `src/policybench/models/fast_sampler.py` removes that partition, which is what makes
 `torch.compile` and `CUDAGraph` measurable on this checkpoint at all. `docs/05` section 1 has
 the mechanism.
 
@@ -309,7 +309,7 @@ the rest: `lint`, `types`, `format`, `hooks`, `test-local`, `data`, `memory`, `k
 
 ```
 conf/                  Hydra configs + experiment files (ablation training)
-src/flowpolicy/
+src/policybench/
   models/pretrained.py adapter: HF checkpoint behind the Policy interface
   models/fast_sampler.py DDIM loop with on-device coefficients (compiles, captures)
   models/policies.py   PolicyLike protocol + the from-scratch policies

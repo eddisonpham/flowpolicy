@@ -3,11 +3,33 @@
 | Field | Value |
 |---|---|
 | Current milestone | M9 hardening (post-M8), 2026-10-28 |
-| Current step id | none (evals complete: E0, E3, E3-replication, E8, E9, E10, E12, E14, serving load, paced loop) |
+| Current step id | none (evals complete: E0, E3, E3-replication, E8, E9, E10, E12, E14, serving load, paced loop; rename to `policybench` complete) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
-| Last completed step | M9.7 (2026-10-28): docs reconciliation, CI smoke job, E8 precision, E3 replication, serving load test, paced loop, E12 blend arm |
+| Last completed step | rename `flowpolicy` -> `policybench` (2026-10-28), after M9.7 |
 | Evidence | `just test` green (2026-10-28: ruff, ruff format, mypy strict on 26 files, 57 CPU unit tests, 1 smoke test); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
+
+## What changed on 2026-10-28 (renamed to PolicyBench)
+
+The package and project name now say what the repository does. The old name described the
+from-scratch flow-matching models, which became an ablation on 2026-10-27; the stack itself
+measures and deploys a borrowed diffusion policy.
+
+- `src/flowpolicy/` -> `src/policybench/` (`git mv`), all `flowpolicy.*` imports and docs paths
+  rewritten, `pyproject.toml` name/description/hatch target updated, `uv.lock` relocked.
+- Project title in `README.md` (via `docs/README_template.md`), `CLAUDE.md`, `scripts/report.py`
+  and the package docstrings now read PolicyBench. `models.policies.FlowPolicy` keeps its name:
+  that class is the flow-matching ablation model and the name is accurate.
+- The uploaded brief stays verbatim at `flowpolicy_complete/`; `docs/00` points at it there.
+- `docs/CHANGELOG.md` carries a note that older entries were path-rewritten, not rewritten
+  history.
+- Verified: `just test` 57 passed, tables and figures regenerate byte-identically (no data
+  contained the old name), README diff is the title plus ten path mentions.
+- **Found while doing it:** the rename forced a real `uv sync`, which prunes the optional
+  backend -- and `just test` then fails at collection, because `tests/unit/test_fast_sampler.py`
+  imports `diffusers` while the lockfile has neither `diffusers` nor `lerobot`. CI's `unit` job
+  runs exactly `uv sync --frozen` + `pytest -m "unit and not gpu"`, so that job has been red
+  since `9e5be8c` regardless of the rename. Not fixed here; see open items.
 
 ## What changed on 2026-10-28, M9 (hardening after packaging)
 
@@ -49,7 +71,7 @@ Both are now in the repo; the second is a README section and `docs/RESUME.md`.
   DDIM loop mixed ten host scalars into CUDA math per chunk. That both forced a host/device
   synchronization per step and gave Inductor a CPU partition that wants MSVC. The 2026-10-27
   note called this "an environment limitation"; it was a sampler-implementation problem.
-- `src/flowpolicy/models/fast_sampler.py` precomputes the DDIM coefficients on the sampling
+- `src/policybench/models/fast_sampler.py` precomputes the DDIM coefficients on the sampling
   device and runs the loop in tensor math only. Proven equal to `diffusers` at five step counts
   and two beta schedules (`tests/unit/test_fast_sampler.py`, 9 tests), including the case where
   it disagrees if a coefficient is applied twice -- a bug this file had on first draft and the
@@ -74,7 +96,7 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
 - Substrate: `lerobot/diffusion_pusht` (Apache-2.0, Diffusion Policy, gym-pusht, 175k steps,
   262.7 M parameters fp32). Model card: 65.4 % success, 0.955 mean max overlap over 500
   episodes.
-- New code: `src/flowpolicy/models/pretrained.py` (adapter + normalization read from the
+- New code: `src/policybench/models/pretrained.py` (adapter + normalization read from the
   checkpoint), `PolicyLike` protocol in `models/policies.py`, one pretrained branch in
   `rollout.load_policy`, a `--scheduler` flag on the three runners. The episode loop, the
   deployment loop, the latency protocol and the generators did not change.
@@ -124,7 +146,7 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   baseline; uniform temporal ensembling recovers 53.3 % / 43.3 % (coverage 0.926 / 0.880) at 4x
   the chunk count. Separated, unlike the ablation's ambiguous version. It is also the fifth row
   of the computed headline summary, so `just report` and the README table carry it
-  (`flowpolicy.eval.report` strips the runner's `-r2` suffix to pair the rows).
+  (`policybench.eval.report` strips the runner's `-r2` suffix to pair the rows).
 - **E14 (2026-10-28) is the stack's own value baseline**, same checkpoint / GPU / episodes:
   published DDPM@100 53.1 s per episode and 23.9 s of GPU time per 100 control steps; stock
   DDIM@10 5.5 s and 2.65 s; fast-sampler DDIM@4 2.6 s and 1.19 s (20x cheaper than published),
@@ -134,8 +156,8 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   policy parallelism is not a throughput win. Sampler equivalence: action chunks within 0.02 px
   of the library's, but only 9/20 paired episodes agree on success (chaotic task, 20-episode
   resolution), reported rather than hidden.
-- **Infrastructure added 2026-10-27 (no training involved)**: `flowpolicy.eval.report` (computed
-  headline summary, used by `just report` and the README), `flowpolicy.deploy.server` +
+- **Infrastructure added 2026-10-27 (no training involved)**: `policybench.eval.report` (computed
+  headline summary, used by `just report` and the README), `policybench.deploy.server` +
   `scripts/serve.py` (`just serve`, stdlib-only HTTP serving boundary, contract in docs/05
   section 4), `scripts/doctor.py` (`just doctor`, PASS/FAIL/NOT RUN environment check),
   `docs/MODEL_CARD.md`, and a CI job that regenerates the tables and fails if they are stale.
@@ -152,6 +174,12 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
 
 ## Open items (not blockers)
 
+- **The `unit` CI job cannot pass from a clean checkout** (reproduced 2026-10-28):
+  `tests/unit/test_fast_sampler.py` imports `diffusers` to compare against the library's
+  scheduler, and `diffusers` is not in `uv.lock`. Two candidate fixes: add `diffusers` to the
+  `dev` group (keeps the equivalence test running in CI, ~1 extra dependency tree) or mark the
+  module `pytest.importorskip("diffusers")` (cheap, but then the strongest correctness check
+  never runs in CI). Recommendation: the dev group.
 - One checkpoint exists for PushT, so E0/E3/E9/E10 intervals are episode-level and there is
   no seed-to-seed variance to report. Stated on every table that has pretrained rows.
 - The backend lives outside `uv.lock`; `just setup` prunes it. Documented, not solved.
@@ -179,7 +207,7 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
 
 - 2026-10-18: install agent kit by promoting `agent_kit/` to repo root; push `main` to origin.
 - 2026-10-18: commit `docs/STATE.md` on direct user instruction, without `GO <id>`.
-- 2026-10-18: uploaded `flowpolicy_complete` is the authoritative spec; docs/ adopts it verbatim.
+- 2026-10-18: uploaded `policybench_complete` is the authoritative spec; docs/ adopts it verbatim.
 - 2026-10-18: "proceed with implementation" taken as the green flag for M0.1 only (roadmap row M0).
 - 2026-10-18: owner confirms this Windows 11 laptop runs all work; there is no separate Ubuntu host.
 - 2026-10-18: "proceed with the recommended ones" -> native Windows for the gates; Docker/G9 deferred.
@@ -194,3 +222,4 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
 - 2026-10-27: owner asked to do a 180 -- use a model that is already good and work on the software infrastructure. Decisions taken with the owner: (1) wrap the `lerobot` package rather than reimplement the model, (2) full re-frame: adapter, validation, re-run E3/E9/E10, rewrite README and docs 00-07, (3) keep the from-scratch work as a documented ablation and delete the unrun E13 scaffolding.
 - 2026-10-28: owner asked to fix the outstanding issues, produce a measured usefulness baseline, and explain the software in plain terms plus XYZ resume bullets. Scope taken: close the compile gap at its cause, add E14 as the baseline, render a demo artifact, and write the explanation down (`README.md` top section, `docs/RESUME.md`) rather than only in chat.
 - 2026-10-28: owner asked to plot the remaining phases, then "proceed with the full implementation of EVERYTHING you planned" with M9.3 (E8 precision on the pretrained checkpoint) named explicitly. Scope taken: M9.1-M9.7 in the proposed order, one measurement per step, every claim entered in docs/04 with a "false if" condition, and the unmeasured remainder (E2, E4-E7, E11, narrated video) left declared rather than attempted.
+- 2026-10-28: owner asked whether the project should be renamed, then chose `policybench` (package and project) with the full scope: package directory, pyproject, lock, README title and docs prose.

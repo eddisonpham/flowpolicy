@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from flowpolicy.eval.report import headline_rows, headline_table, inventory
+from policybench.eval.report import headline_rows, headline_table, inventory
 
 pytestmark = pytest.mark.unit
 

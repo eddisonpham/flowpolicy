@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from flowpolicy.models.pretrained import (
+from policybench.models.pretrained import (
     denormalize_action,
     normalize_image,
     normalize_state,

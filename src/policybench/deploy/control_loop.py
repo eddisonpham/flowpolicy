@@ -26,8 +26,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from flowpolicy.envs.pusht import MAX_STEPS, PushTEnv
-from flowpolicy.models.policies import PolicyLike
+from policybench.envs.pusht import MAX_STEPS, PushTEnv
+from policybench.models.policies import PolicyLike
 
 
 @dataclass

@@ -1,4 +1,4 @@
-# FlowPolicy: operating rules for the coding agent
+# PolicyBench: operating rules for the coding agent
 
 Spec lives in `docs/` (start at `docs/07_roadmap.md`). Current state lives in `docs/STATE.md`. These rules override any urge to be helpful by doing more.
 

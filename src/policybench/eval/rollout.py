@@ -18,12 +18,12 @@ from typing import Any
 import numpy as np
 import torch
 
-from flowpolicy.config import ModelConfig
-from flowpolicy.data.normalizer import Stats
-from flowpolicy.envs.pusht import MAX_STEPS, PushTEnv
-from flowpolicy.eval.metrics import assert_seed_disjoint
-from flowpolicy.models.policies import PolicyLike, build_policy
-from flowpolicy.models.pretrained import PretrainedDiffusionPolicy
+from policybench.config import ModelConfig
+from policybench.data.normalizer import Stats
+from policybench.envs.pusht import MAX_STEPS, PushTEnv
+from policybench.eval.metrics import assert_seed_disjoint
+from policybench.models.policies import PolicyLike, build_policy
+from policybench.models.pretrained import PretrainedDiffusionPolicy
 
 __all__ = ["assert_seed_disjoint", "evaluate", "load_policy", "rollout_episode"]
 

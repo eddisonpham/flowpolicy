@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import argparse
 
-from flowpolicy.deploy.server import serve
-from flowpolicy.eval.rollout import load_policy
+from policybench.deploy.server import serve
+from policybench.eval.rollout import load_policy
 
 
 def main() -> None:

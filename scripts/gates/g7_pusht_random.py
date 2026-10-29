@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from flowpolicy.envs.pusht import MAX_STEPS, PushTEnv
+from policybench.envs.pusht import MAX_STEPS, PushTEnv
 
 
 def main() -> int:

@@ -23,11 +23,11 @@ import numpy as np
 import torch
 from torch import nn
 
-from flowpolicy.config import TrainConfig
-from flowpolicy.data.normalizer import Stats
-from flowpolicy.data.window import WindowDataset
-from flowpolicy.models.policies import BasePolicy, build_policy
-from flowpolicy.training.ema import ModelEMA
+from policybench.config import TrainConfig
+from policybench.data.normalizer import Stats
+from policybench.data.window import WindowDataset
+from policybench.models.policies import BasePolicy, build_policy
+from policybench.training.ema import ModelEMA
 
 
 def _git_hash() -> str:

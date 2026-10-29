@@ -16,7 +16,7 @@ the same GPU and the same episodes:
     the loop cannot be compiled or captured as one graph.
 
 ``fast-ddim{4,10}``
-    The same DDIM math through ``flowpolicy.models.fast_sampler`` (coefficients precomputed
+    The same DDIM math through ``policybench.models.fast_sampler`` (coefficients precomputed
     on the device, proven equal to ``diffusers`` in tests). Same policy, same numbers, but
     the loop is one graph -- so CUDA graphs and ``torch.compile`` apply.
 
@@ -46,8 +46,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from flowpolicy.eval.latency import benchmark
-from flowpolicy.eval.rollout import evaluate, load_policy
+from policybench.eval.latency import benchmark
+from policybench.eval.rollout import evaluate, load_policy
 
 DEFAULT_HF_ID = "lerobot/diffusion_pusht"
 

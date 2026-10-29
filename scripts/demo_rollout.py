@@ -26,8 +26,8 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
-from flowpolicy.envs.pusht import MAX_STEPS, PushTEnv
-from flowpolicy.eval.rollout import _obs_batch, load_policy
+from policybench.envs.pusht import MAX_STEPS, PushTEnv
+from policybench.eval.rollout import _obs_batch, load_policy
 
 PANEL = 288  # 3x the 96 px observation, integer scale keeps the pixels honest
 SIDEBAR = 260

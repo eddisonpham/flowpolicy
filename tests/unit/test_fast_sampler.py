@@ -1,6 +1,6 @@
 """The fast DDIM sampler must be the same sampler, not merely a similar one.
 
-`flowpolicy.models.fast_sampler` exists so the denoising loop has no host scalar math
+`policybench.models.fast_sampler` exists so the denoising loop has no host scalar math
 (see its module docstring). That is only worth having if the numbers are unchanged, so
 these tests run a toy epsilon-predictor through `diffusers`' own `DDIMScheduler` and
 through our loop and require the trajectories to agree. CPU only, no checkpoint, no GPU:
@@ -13,7 +13,7 @@ import pytest
 import torch
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 
-from flowpolicy.models.fast_sampler import ddim_coefficients, ddim_sample, ddim_timesteps
+from policybench.models.fast_sampler import ddim_coefficients, ddim_sample, ddim_timesteps
 
 
 def _scheduler(**overrides: object) -> DDIMScheduler:

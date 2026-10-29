@@ -9,10 +9,10 @@ import argparse
 import json
 from pathlib import Path
 
-from flowpolicy.config import TrainConfig
-from flowpolicy.data.normalizer import Stats
-from flowpolicy.data.window import WindowDataset, load_zarr, split_episodes
-from flowpolicy.training.trainer import Trainer
+from policybench.config import TrainConfig
+from policybench.data.normalizer import Stats
+from policybench.data.window import WindowDataset, load_zarr, split_episodes
+from policybench.training.trainer import Trainer
 
 
 def main() -> None:

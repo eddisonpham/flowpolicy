@@ -1,6 +1,6 @@
 # CHANGELOG
 
-Paths in entries below refer to where files lived on the date of the entry. The 2026-10-27 entry lists every move (from-scratch measurements now under `results/ablation/`).
+Paths in entries below refer to where files lived on the date of the entry. The 2026-10-27 entry lists every move (from-scratch measurements now under `results/ablation/`). Exception: the 2026-10-28 rename entry below rewrote `flowpolicy` to `policybench` in the older entries, so their paths still resolve; the events they describe happened under the earlier name, and the uploaded brief is still `flowpolicy_complete/`.
 
 ## 2026-10-18: Stage 1
 
@@ -18,7 +18,7 @@ Paths in entries below refer to where files lived on the date of the entry. The 
 
 ## 2026-10-18: M0 scaffold (agent)
 
-- Repo scaffold per M0: `pyproject.toml` (3.12, hatchling, ruff, mypy strict on `src/`, pytest markers), `uv.lock`, `justfile`, `.pre-commit-config.yaml`, `.github/workflows/ci.yml`, `README.md`, `AGENTS.md`, `src/flowpolicy/__init__.py`, `tests/unit/test_package.py`.
+- Repo scaffold per M0: `pyproject.toml` (3.12, hatchling, ruff, mypy strict on `src/`, pytest markers), `uv.lock`, `justfile`, `.pre-commit-config.yaml`, `.github/workflows/ci.yml`, `README.md`, `AGENTS.md`, `src/policybench/__init__.py`, `tests/unit/test_package.py`.
 - Acceptance met: `just setup && just test` green from a clean clone; CI green (run 39179413619).
 - Deviation: the `smoke` CI job in 01 §4 is absent until a model exists (M3); the `unit`, `lint`, `types` jobs cover M0.
 
@@ -49,7 +49,7 @@ Paths in entries below refer to where files lived on the date of the entry. The 
 ## 2026-10-19: M2 data and model plumbing (agent)
 
 - Added the Zarr window loader, train-only normalizer with round-trip tests, ResNet-18 GN multi-frame encoder, 1-D U-Net and transformer chunk heads, and the three policies (flow, DDPM/DDIM, ACT-style regression) behind one `BasePolicy` interface (`loss(batch)` / `predict_chunk(obs)`).
-- `scripts/data/prepare_pusht.py` downloads and converts `lerobot/pusht` to `data/pusht/pusht.zarr` (32 MB, MIT). Hydra configs live in `conf/` with structured dataclasses in `src/flowpolicy/config.py`.
+- `scripts/data/prepare_pusht.py` downloads and converts `lerobot/pusht` to `data/pusht/pusht.zarr` (32 MB, MIT). Hydra configs live in `conf/` with structured dataclasses in `src/policybench/config.py`.
 - Measured memory table (docs/03 §4): batch 32 = 2317 MiB / 7.80 steps/s, batch 64 = 4414 MiB / 4.00 steps/s, batch 128 = 8616 MiB / 0.05 steps/s and flagged not fitting. Model is 10.95 M parameters. Batch 64 was used for E1.
 - Unit tests cover window indices, normalizer round-trip, policy shapes/losses, seed disjointness, and resume equivalence (`rtol=1e-5`). `just test` green (23 tests).
 
@@ -112,7 +112,7 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   `lerobot/diffusion_pusht` (Apache-2.0, 262.7 M parameters, fp32, trained on gym-pusht for
   175k steps; the model card reports 65.4 % success and 0.955 mean max overlap over 500
   episodes). Nothing is trained here any more.
-- `src/flowpolicy/models/pretrained.py` is new: a `PolicyLike` adapter that puts the HF
+- `src/policybench/models/pretrained.py` is new: a `PolicyLike` adapter that puts the HF
   checkpoint behind the repo's interface. `models/policies.py` gained the structural
   `PolicyLike` protocol; `eval/rollout.py`, `eval/latency.py` and `deploy/control_loop.py`
   were re-typed to it. The episode loop, the latency protocol, the control loop, the tables
@@ -153,9 +153,9 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   the baseline) while temporal ensembling recovers 53.3 % / 43.3 % (0.926 / 0.880). Together E3 +
   E9 fix the deployable envelope: only N <= 4 fits a 100 ms period, exactly where coverage has
   plateaued.
-- **Infrastructure added the same day, none of it training.** `flowpolicy.eval.report` computes
+- **Infrastructure added the same day, none of it training.** `policybench.eval.report` computes
   the headline summary that `just report` prints and that the README injects (so the five
-  headline answers are generated, not typed); `flowpolicy.deploy.server` is a stdlib-only HTTP
+  headline answers are generated, not typed); `policybench.deploy.server` is a stdlib-only HTTP
   serving boundary with a documented JSON contract (docs/05 section 4) and six socket-level
   contract tests; `scripts/doctor.py` reports environment PASS/FAIL/NOT RUN in seconds;
   `docs/MODEL_CARD.md` covers the borrowed policy and this stack; CI gained a job that
@@ -166,7 +166,7 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   ablation path), 04 (matrix, deviations, priority order), 06 (D11, R13, R14), 07 (rule 4
   amended: borrowed policy code is now allowed, the harness/loop/tables stay ours).
 - **E12 became the fifth headline answer, and the README prose stopped restating numbers.**
-  `flowpolicy.eval.report` gained a row for the `-r2` rows (naive replacement 10 % at 100 ms
+  `policybench.eval.report` gained a row for the `-r2` rows (naive replacement 10 % at 100 ms
   and 200 ms against 57 % / 43 % for the 8-step baseline, temporal ensembling recovering
   53 % / 43 %), so the deployment finding is in `just report` and in the README's generated
   headline table rather than only in the E10 prose; `tests/unit/test_report.py` covers it
@@ -185,7 +185,7 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   The blocker was `diffusers` keeping `alphas_cumprod` on the CPU and indexing it with a Python
   int per step: lerobot's DDIM loop therefore mixed ten host scalars into CUDA math per chunk,
   which costs a host/device synchronization per step *and* gives Inductor a CPU partition that
-  needs a C++ compiler. `src/flowpolicy/models/fast_sampler.py` precomputes the DDIM
+  needs a C++ compiler. `src/policybench/models/fast_sampler.py` precomputes the DDIM
   coefficients on the sampling device and runs the loop in tensor math only. Equality with
   `diffusers` is a test, not a claim: `tests/unit/test_fast_sampler.py` (9 tests) covers five
   step counts, two beta schedules, the timestep grid and the coefficient layout. The first draft
@@ -284,3 +284,25 @@ Paths in entries below refer to where files lived on the date of the entry. The 
 - Tests: 57 CPU unit tests (from 49) -- blend arithmetic, `resolve_dtype`, the E8 headline row,
   and the report tests rewritten to look rows up by experiment instead of by position. `just
   lint`, `just types`, `just test` and `just smoke` green; tables and README regenerate.
+
+## 2026-10-28: renamed `flowpolicy` -> `policybench`
+
+- The package name described the from-scratch flow-matching models, which became an ablation on
+  2026-10-27; the repository is now a measurement and deployment stack around a borrowed
+  diffusion policy. `src/flowpolicy/` moved to `src/policybench/` with `git mv`, every
+  `flowpolicy.*` import and docs path was rewritten, `pyproject.toml` (name, description, hatch
+  target) and `uv.lock` were updated, and `just test` passes 57 tests afterwards.
+- `models.policies.FlowPolicy` was deliberately **not** renamed: that class is the conditional
+  flow-matching ablation model, and the name is still the right one. A blanket search-and-replace
+  would have silently renamed the model too.
+- Project title updated in `docs/README_template.md` (README is generated), `CLAUDE.md`,
+  `scripts/report.py` and the package docstrings. The uploaded brief keeps its original name at
+  `flowpolicy_complete/`, and `docs/00` now says so explicitly instead of citing a document that
+  no longer matches the tree.
+- No measured number changed: no `results/*.jsonl` row contained the old name, and
+  `just tables && just figures` regenerated byte-identically. The README diff is the title plus
+  ten path mentions.
+- Found while verifying: a real `uv sync` prunes the optional backend, and `just test` then fails
+  at collection because `tests/unit/test_fast_sampler.py` imports `diffusers`, absent from
+  `uv.lock`. CI's `unit` job has the same shape, so it has been red since `9e5be8c`. Recorded as
+  an open item in `docs/STATE.md` rather than fixed inside a rename.

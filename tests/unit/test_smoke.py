@@ -3,10 +3,10 @@ import json
 import numpy as np
 import pytest
 
-from flowpolicy.config import TrainConfig
-from flowpolicy.data.normalizer import Stats
-from flowpolicy.data.window import WindowDataset, ZarrArrays
-from flowpolicy.training.trainer import Trainer
+from policybench.config import TrainConfig
+from policybench.data.normalizer import Stats
+from policybench.data.window import WindowDataset, ZarrArrays
+from policybench.training.trainer import Trainer
 
 pytestmark = pytest.mark.unit
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from flowpolicy.eval.rollout import evaluate
+from policybench.eval.rollout import evaluate
 
 
 def main() -> None:
