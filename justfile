@@ -130,10 +130,12 @@ eval-dp-noise episodes="200" seed_start="1000" offset="500000":
     uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_noise{{offset}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 10 --noise-seed-offset {{offset}} --out results/e0_published_seeds_noise2.jsonl
 
 # The same comparison the other way: the checkpoint's own DDPM@100 on the published seeds, to
-# test whether the success gap is truncated sampling rather than the harness.
-eval-dp-published-ddpm episodes="50" seed_start="1000":
+# test whether the success gap is truncated sampling rather than the harness. N=100 costs ~4 s
+# per chunk, and two rollout workers contend on one GPU (2.3x per chunk for 2x the work, i.e.
+# slower in wall clock), so this recipe defaults to one worker.
+eval-dp-published-ddpm episodes="50" seed_start="1000" workers="1":
     uv run python scripts/prune_results.py --path results/e0_published_seeds_ddpm.jsonl --prefix dp_published_ddpm100_n
-    uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_ddpm100_n{{episodes}} --scheduler ddpm --steps 100 --episodes {{episodes}} --seed-start {{seed_start}} --workers 2 --out results/e0_published_seeds_ddpm.jsonl
+    uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_ddpm100_n{{episodes}} --scheduler ddpm --steps 100 --episodes {{episodes}} --seed-start {{seed_start}} --workers {{workers}} --out results/e0_published_seeds_ddpm.jsonl
 
 # Adapter-free control (docs/04 section 4): the checkpoint through lerobot's *own* eval loop on
 # the same seed block, with none of this repo's code in the path. Own venv, because lerobot
@@ -143,6 +145,12 @@ lerobot-env:
 
 lerobot-control episodes="200" seed="1000" batch="8":
     EPISODES={{episodes}} SEED={{seed}} BATCH={{batch}} bash scripts/lerobot_control.sh
+
+# The same control, but writing one row per episode so it pairs with this repo's rows by seed
+# (McNemar instead of an aggregate Fisher comparison). Needs the migrated checkpoint that
+# `lerobot-control` builds. Run under the isolated lerobot interpreter, not the project's.
+lerobot-control-rows episodes="200" seed="1000" batch="8":
+    .venv-lerobot/Scripts/python.exe scripts/lerobot_control_rows.py --episodes {{episodes}} --seed {{seed}} --batch {{batch}}
 
 # Render one episode to an annotated GIF (packaging, not a measurement).
 demo steps="4" seed="10000":
