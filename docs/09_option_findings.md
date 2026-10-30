@@ -13,7 +13,7 @@ adds a third-party surface goes last, and only if the cheaper items did not alre
 | F. Multiplicity / repeated-looks note | lowest (docs only) | **done** | `33f7215` |
 | B. Per-episode rows from the adapter-free control | low (new isolated file) | **done, verified** | `d1e27f0` |
 | C. Crash-bounded, resumable eval blocks | medium (changes the harness) | **done, verified** | `8bd1ea3` |
-| A. DDPM@100 on the 200 published seeds | none in code, ~3 GPU-h | **running** | (rows land in `results/e0_published_seeds_ddpm.jsonl`) |
+| A. DDPM@100 on the 200 published seeds | none in code, 2 h 58 m GPU | **done** | (this commit; rows in `results/e0_published_seeds_ddpm.jsonl`) |
 | H. Adopt lerobot's processors | medium, contingent on A | **gated** | — |
 | D. A second task | high | **not started** | — |
 | E. Real deployment path (ROS 2) | high | **partial already measured** | — |
@@ -73,15 +73,15 @@ row, so this is a property of the probe, not a defect, but see the open item bel
 
 Residual: a crash costs at most one chunk (25 of 200 episodes at the default), not one episode.
 
-## A. DDPM@100 on the 200 published seeds — running
+## A. DDPM@100 on the 200 published seeds — done, and it splits the gap
 
-The only open scientific item is a 15-point success gap that is known to sit in *this repo's path*
-(the adapter-free control reproduces the checkpoint on the same seeds) but not where in that path.
+The only open scientific item was a 15-point success gap known to sit in *this repo's path* (the
+adapter-free control reproduces the checkpoint on the same seeds) but not where in that path.
 
 **Cost, measured rather than estimated.** The DDPM@100 arm costs 4.0 s per chunk and ~154 s per
 episode with two workers; E14's clean single-process number is 1766 ms per chunk, and two workers
 measured 2.3x per chunk for 2x the work, i.e. slower in wall clock. The recipe therefore defaults
-to one worker (`d1e27f0`), and the 200-seed block is a ~3 h job.
+to one worker (`d1e27f0`), and the 200-seed block is a ~3 h job (2 h 58 m measured, one worker).
 
 **What the already-committed 50-seed arm says, and why it is not the answer.** That block
 (`results/e0_published_seeds_ddpm.jsonl` at `7094d5d`) is 30/50 (60.0 %) against the checkpoint's
@@ -108,14 +108,38 @@ too, because a sampler deficit acting uniformly and an adapter defect acting on 
 predict different splits. (The block split is post-hoc; four tests at alpha 0.05 put the
 Bonferroni bar at 0.0125, which only the 1100-1149 block clears.)
 
-**Pre-registered reading of A, written before its rows exist:**
+**Result (200 seeds, one worker, 2 h 58 m, `results/e0_published_seeds_ddpm.jsonl`).**
 
-1. If DDPM@100 lands near 69 % on the whole block **and** is separated from DDIM@10 on 1100-1149,
-   the sampler is the cause: truncation costs the points, and E0's verdict becomes "the checkpoint
-   reproduces only at its own 100-step sampler".
-2. If DDPM@100 is not separated from DDIM@10 on 1100-1149, the sampler is exonerated and H
-   (adapter) is the next thing to run, against that block rather than the whole thing.
-3. Either way the row is reported per block as well as in aggregate.
+| Seeds | DDIM@10 (this repo) | DDPM@100 | Discordant (ours / theirs) | Exact McNemar |
+|---|---|---|---|---|
+| **1000-1199 (pre-registered)** | 104 (52.0 %) | **118 (59.0 %)** | 37 / 51 | p = 0.17 |
+| 1000-1049 | 32 (64.0 %) | 30 (60.0 %) | 12 / 10 | p = 0.83 |
+| 1050-1099 | 25 (50.0 %) | 35 (70.0 %) | 7 / 17 | p = 0.064 |
+| 1100-1149 | 18 (36.0 %) | 30 (60.0 %) | 5 / 17 | p = 0.017 |
+| 1150-1199 | 29 (58.0 %) | 23 (46.0 %) | 13 / 7 | p = 0.26 |
+
+Mean coverage is flat (0.895 at DDIM@10, 0.893 at DDPM@100) and the arm costs 4.4x per chunk at
+batch 1 (1819 ms against 417 ms; both are in the rows).
+
+**Against the pre-registered reading.** Neither branch fires as written. Branch 1 wanted ~69 %
+overall *and* separation on 1100-1149: the arm lands at 59.0 % with p = 0.17 overall, and the
+band's p = 0.017 does not clear the four-look Bonferroni bar of 0.0125 that `docs/04` §1 sets.
+Branch 2 wanted no separation on the band: there is one, and it is the largest effect in the table.
+The honest reading is the one neither branch offered:
+
+- **The sampler schedule is part of the gap, not all of it.** The checkpoint's own 100-step DDPM
+  sampler buys +7.0 pp overall (52.0 -> 59.0) and +24 pp on 1100-1149 (36.0 -> 60.0), which is most
+  of that band's 32-point deficit. It leaves ~10 pp to the checkpoint's 69 % unexplained, and on
+  1150-1199 the arm *loses* 6 pp (p = 0.26), so band-level effects at n = 50 are themselves noisy.
+  What the table supports is "truncated sampling is a real, partial cause" -- not "the band is the
+  sampler".
+- **It does not rescue the reproduction claim.** The published sampler is 4.4x the per-chunk cost
+  and still 10 pp short of the checkpoint's own block here, so E0's criterion stays PARTIAL and
+  DDIM@10 stays the deployment-relevant point estimate (`docs/05`). What changes is attribution:
+  the ~15 pp was "this path against the reference"; it is now "~7 pp sampler choice, ~8 pp adapter
+  or process", and only the second half is a defect.
+- **H's target is now smaller and located.** It has to explain ~8-10 pp at DDPM@100 on the
+  1100-1149 band, with a paired design, rather than a 15 pp block average.
 
 ## D, E, G. Assessed and not started
 
@@ -137,19 +161,36 @@ simulator dependency; the CPU container cannot be built or verified on this host
 reach, not evidence, and `docs/07` rule 1 says an option is worth taking if it produces rows or
 makes a written sentence true. Skipped.
 
-## H. Adopt lerobot's processors — gated on A
+## H. Adopt lerobot's processors — now the leading hypothesis
 
 Medium cost, and it trades away the boundary `docs/07` rule 4 draws (measurement machinery stays
-ours), so it needs a dated amendment like D11's. It is now the **leading** hypothesis rather than a
-contingency, because C-A's proxy evidence above shows no sampler effect on the block that had a gap
-worth measuring. Do not start it before A returns.
+ours), so it needs a dated amendment like D11's. A did not exonerate the sampler, but it did not
+clear it either: ~7 pp of the 15 was sampler choice, ~8 pp survives at the checkpoint's own
+sampler, and the band effect that is left is 60.0 % against 68.0 %. So H is the only hypothesis
+cheap enough to run before D, and its target is a paired ~8-10 pp gap on 1100-1149 at DDPM@100.
 
-## Decision
+## Decision (staff-engineer read of the above)
 
-Proceed with **A (running) + B (done) + C (done) + F (done)**, and hold H behind A's
-pre-registered reading above. Do not start D, E or G.
+Take **C + F + B + A** -- all four are done in this batch -- and take **H next**, with the pairing
+work B enables done first. Leave **D, E and G** declined; nothing in A's result changes their
+tradeoffs.
 
-The combination matters more than any single item: F makes the per-block look legitimate to
-report, C makes the block survive the 3 hours it takes, B makes the control comparable on the same
-seeds once A lands, and A is the only item that produces a new scientific row. Four cheap items
-turn one expensive measurement from a number into an attribution.
+Why this combination and not a single item: F is the cheapest thing in the batch and it immediately
+changed how A is allowed to be reported (four post-hoc looks, bar 0.0125, which is exactly what
+stops "the sampler fixes the band" from being written). C was not on the menu as a science item and
+turned out to be the difference between a 3 h block that survives a closed laptop and one that does
+not -- it paid for itself during this batch. B converts an aggregate control into a paired one, so
+H's eventual verdict can be a McNemar instead of a Fisher test on 134 vs 138. A cost 3 GPU-h and
+bought the one thing no doc could supply: the gap has a size per component (7 + 8 pp), a location
+(the 1100-1149 band) and an honest null in the other two bands.
+
+The ordering is the point. A alone would have produced "59 %, still not 69 %" and no next step;
+F + A produced "7 pp sampler, ~8 pp residual, on this band, at this bar". $0 of that came from the
+high-risk options: D, E and G would each have cost days and none of them would have touched the
+gap, because all three change what is being measured rather than where the difference comes from.
+
+**One measurement is still owed, and it is the first step of H, not a new option:** `just
+lerobot-control-rows` at 200 episodes. Until it runs, "the reference reproduces" is a Fisher test on
+aggregate counts (134 vs 138); afterwards it is paired by seed like every other comparison here, and
+H's before/after is measurable on the same episodes. It is a ~2 h job on an idle GPU and should be
+run once, alone, with no other block competing for the device.

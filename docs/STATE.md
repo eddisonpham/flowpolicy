@@ -347,17 +347,19 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   `forkserver` context. It returned 134/200 (67.0 %) against that block's 138/200 (69.0 %),
   Fisher p = 0.75: **the reference reproduces on this host.** Nothing in the project's locked
   environment changed. What remains is this repo's own 15 pp shortfall on the same episodes
-  (104/200, Fisher p = 0.003), attributed to the path but not yet split between sampler (the
-  control runs DDPM@100, E0's 52 % is DDIM@10) and adapter; `docs/04` section 4 names the
-  missing 200-seed DDPM@100 cell.
+  (104/200, Fisher p = 0.003), attributed to the path and now split by the 200-seed DDPM@100 cell filled on 2026-10-30
+  (`docs/09` option A): 118/200 (59.0 %) against DDIM@10's 104/200 on the same episodes, exact
+  McNemar p = 0.17, so the published sampler buys ~7 pp at 4.4x the per-chunk cost and ~8 pp is
+  not sampling.
 - **The success gap is not the noise stream this repo draws (2026-10-30).** Same 200 seeds, same
   sampler, only the per-episode policy noise seed shifted: 91/200 (45.5 %) against 104/200
   (52.0 %), exact McNemar p = 0.21, coverage 0.884 against 0.895, and only 109/200 episodes
   agree. The noise decides individual episodes -- it is the loosest joint in the pipeline -- but
   it does not move the rate, and 69 % sits outside both blocks. With normalization buffers, the
   84x84 crop, action slicing, observation rendering, observation history, truncated sampling
-  (DDPM@100 p = 0.14) and now the noise stream excluded, the 200-seed gap stays unexplained and
-  is reported that way (`docs/04` section 4).
+  (DDPM@100 p = 0.14) and now the noise stream excluded, the 200-seed gap was unexplained as of
+  that run. The 200-seed DDPM@100 block then bought 7 of the 15 pp (59.0 % against 52.0 %,
+  p = 0.17), leaving ~8 pp to the adapter or the process; `docs/09` option A has the split.
 - `lerobot` lives outside `uv.lock` (it caps torch < 2.12) and `just setup` prunes it;
   `diffusers` is locked in `dev`, so the unit gate no longer depends on the backend. The
   lerobot half is still documented rather than solved.

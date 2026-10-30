@@ -206,6 +206,22 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   checkpoint's, so per-seed outcomes are not expected to align exactly (both-fail coverage
   correlation -0.02).
 
+- **2026-10-30: the 200-seed DDPM@100 cell is filled, and it splits the gap.** `just
+  eval-dp-published-ddpm` re-ran this repo's adapter at the checkpoint's own published sampler
+  (DDPM, 100 steps, stock schedule) on the same 200 seeds: 118/200 (59.0 %) against DDIM@10's
+  104/200 (52.0 %) on identical episodes, 37/51 discordant, exact McNemar p = 0.17 -- not separated
+  in aggregate, +7.0 pp in point estimate, mean coverage unchanged (0.893 vs 0.895), at 4.4x the
+  per-chunk cost (1819 ms vs 417 ms). Per 50-seed block (post-hoc, four looks): the deficit on
+  1100-1149 shrinks from 18/50 (36.0 %) to 30/50 (60.0 %) against the checkpoint's 34/50 (68.0 %),
+  discordant 5/17, p = 0.017 -- the largest effect in the split, but outside the 0.0125 Bonferroni
+  bar for four looks, so it is directional; 1050-1099 gains (25 -> 35, p = 0.064) and 1150-1199
+  loses (29 -> 23, p = 0.26). This amends the 2026-10-29 entry's "truncated sampling is not the
+  cause": it is worth ~7 pp and it is not the whole cause, so the ~10 pp that survives at the
+  published sampler is adapter or process -- the thing a processor adoption (docs/08 option H)
+  would test. E0's criterion stays PARTIAL, because the claim is about the deployment sampler and
+  the published sampler does not reproduce the published block here either. Counting this test the
+  family would be seven and Bonferroni would set 0.007; A is not quoted in the README, so no quoted
+  sentence moves.
 - **2026-10-29: the published 69 % cannot be re-run on this stack, and that bounds the gap.**
   The planned discriminator was to run the checkpoint's *own* eval script
   (`lerobot-eval --env.type=pusht`) in this environment on the same seeds: a 69 % result would

@@ -520,5 +520,15 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   the same seeds (p = 0.83), but those seeds are the block where our DDIM is already not separated
   from the checkpoint (p = 0.40). The 200-seed gap is concentrated in seeds 1100-1149 (18/50 vs
   34/50, p < 0.001; post-hoc, labelled). The 200-seed DDPM@100 block now runs one worker (~3 h).
+- **A landed, and the gap splits ~7 / ~8.** The 200-seed DDPM@100 block (`just
+  eval-dp-published-ddpm`, 2 h 58 m on one worker, `results/e0_published_seeds_ddpm.jsonl`) is
+  118/200 (59.0 %) against DDIM@10's 104/200 (52.0 %) on the same episodes: 37/51 discordant, exact
+  McNemar p = 0.17, coverage flat (0.893 vs 0.895), 4.4x the per-chunk cost (1819 ms vs 417 ms).
+  Neither pre-registered branch fires. The sampler is a partial cause: +7 pp overall and +24 pp on
+  the 1100-1149 band (36.0 -> 60.0 %, p = 0.017, outside the 0.0125 four-look bar, against the
+  checkpoint's 68.0 % there), while 1150-1199 moves the other way (29 -> 23, p = 0.26). So ~8-10 pp
+  is not sampling, E0 stays PARTIAL, and H is the only hypothesis left worth running.
 - Declined with reasons in `docs/09`: D (second task), E (ROS 2 -- its measurable half is already
-  `bench_serve` and the paced loop, and Docker is absent here), G (packaging). H is gated on A.
+  `bench_serve` and the paced loop, and Docker is absent here), G (packaging). H is now the next
+  option, not a gated one. Owed before it: the 200-episode `just lerobot-control-rows` run that
+  makes the adapter-free control paired by seed instead of aggregate (134 vs 138 by Fisher).
