@@ -6,7 +6,7 @@
 | Current step id | none (evals complete: E0, E3, E3-replication, E8, E9, E10, E12, E14, serving load, paced loop; rename to `policybench` complete) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
 | Last completed step | rename `flowpolicy` -> `policybench` (2026-10-28), after M9.7 |
-| Evidence | `just test` green (2026-10-29: ruff, ruff format, mypy strict on 27 files, 61 CPU unit tests, 1 smoke test); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
+| Evidence | `just verify` green (2026-10-30: ruff, ruff format, mypy strict on 28 files, 74 CPU unit tests, 1 smoke test, generated tables/README byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
 ## What changed on 2026-10-30 (stage close: one computed verdict, idempotent runs)
