@@ -11,7 +11,7 @@ import json
 import multiprocessing as mp
 import time
 from collections import deque
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -286,6 +286,36 @@ def _stamp(
     row["noise_seed_offset"] = int(noise_seed_offset)
 
 
+# Chunks per worker: the unit of "what a crash costs". One chunk per worker (the old shape) meant
+# a single-worker block flushed nothing until its last episode.
+CHUNKS_PER_WORKER = 8
+
+
+def _chunks(seeds: list[int], workers: int, per_worker: int = CHUNKS_PER_WORKER) -> list[list[int]]:
+    """Interleave seeds into `workers * per_worker` chunks, dropping empty ones.
+
+    Interleaving (rather than slicing the block into consecutive runs) keeps every chunk a spread
+    of the eval seeds, so a partial block is a sample of the block and not one corner of it.
+    """
+    n_chunks = max(1, workers * per_worker)
+    return [chunk for chunk in (seeds[i::n_chunks] for i in range(n_chunks)) if chunk]
+
+
+def completed_seeds(partial: Path, config_id: str) -> set[int]:
+    """Seeds already written to `partial` under this `config_id` (resume support)."""
+    if not partial.exists():
+        return set()
+    done: set[int] = set()
+    for line in partial.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        # A `.partial` from a different run must not be spliced into this one.
+        if row.get("config_id") == config_id and "eval_seed" in row:
+            done.add(int(row["eval_seed"]))
+    return done
+
+
 def evaluate(
     checkpoint: str | Path,
     eval_seeds: list[int],
@@ -309,21 +339,27 @@ def evaluate(
     environment seed alone, so two blocks over the same seeds differ only in the noise
     drawn. Default 0 reproduces every pre-existing result exactly.
 
-    Rows are flushed to `<out_path>.partial` as each shard finishes and only appended to
-    `out_path` once every shard is done. A multi-hour block therefore loses nothing to a crash
-    or a sleeping laptop, and a half-finished block cannot be read as a complete one: either
-    the file is whole or it does not exist.
+    Rows are flushed to `<out_path>.partial` as each chunk finishes and only appended to
+    `out_path` once every chunk is done. A multi-hour block therefore loses at most one chunk to
+    a crash, and a half-finished block cannot be read as a complete one: either the file is
+    whole or it does not exist. Re-running the same `config_id` resumes: seeds already in the
+    `.partial` are not re-run, and seeds from any other `config_id` are ignored.
     """
     assert_seed_disjoint(train_seeds, eval_seeds)
     checkpoint = str(checkpoint)
     if not use_ema:
         raise ValueError("evaluation always uses EMA weights (docs/03 section 6)")
-    chunks = [eval_seeds[i::workers] for i in range(workers)]
     ctx = mp.get_context("spawn")
-    results: list[dict[str, Any]] = []
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     partial = out.with_suffix(out.suffix + ".partial")
+    done = completed_seeds(partial, config_id) & set(eval_seeds)
+    todo = [seed for seed in eval_seeds if seed not in done]
+    if done:
+        print(
+            f"resuming {config_id}: {len(done)}/{len(eval_seeds)} seeds already in {partial}, "
+            f"{len(todo)} to run"
+        )
     with (
         ProcessPoolExecutor(
             max_workers=workers,
@@ -340,10 +376,11 @@ def evaluate(
                 int(noise_seed_offset),
             ),
         ) as pool,
-        partial.open("w", encoding="utf-8", newline="\n") as partial_fh,
+        partial.open("a" if done else "w", encoding="utf-8", newline="\n") as partial_fh,
     ):
-        for part in pool.map(_run_episodes, [c for c in chunks if c]):
-            for row in part:
+        futures = [pool.submit(_run_episodes, chunk) for chunk in _chunks(todo, workers)]
+        for future in as_completed(futures):
+            for row in future.result():
                 _stamp(
                     row,
                     config_id=config_id,
@@ -353,8 +390,18 @@ def evaluate(
                 )
                 partial_fh.write(json.dumps(row) + "\n")
             partial_fh.flush()
-            results.extend(part)
+    # Sorted before the append: chunks finish out of order now, and the block's row order should
+    # not depend on which worker got there first.
+    rows: list[dict[str, Any]] = sorted(
+        (
+            json.loads(line)
+            for line in partial.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ),
+        key=lambda row: (int(row["eval_seed"]), int(row.get("noise_seed", 0))),
+    )
     with out.open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(partial.read_text(encoding="utf-8"))
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
     partial.unlink()
-    return results
+    return rows
