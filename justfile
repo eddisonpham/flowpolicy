@@ -112,6 +112,11 @@ published-blocks:
 eval-dp-published episodes="200" seed_start="1000":
     uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 10 --out results/e0_published_seeds.jsonl
 
+# The same comparison the other way: the checkpoint's own DDPM@100 on the published seeds, to
+# test whether the success gap is truncated sampling rather than the harness.
+eval-dp-published-ddpm episodes="50" seed_start="1000":
+    uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_ddpm100_n{{episodes}} --scheduler ddpm --steps 100 --episodes {{episodes}} --seed-start {{seed_start}} --workers 2 --out results/e0_published_seeds_ddpm.jsonl
+
 # Render one episode to an annotated GIF (packaging, not a measurement).
 demo steps="4" seed="10000":
     uv run python scripts/demo_rollout.py --steps {{steps}} --seed {{seed}} --stride 1

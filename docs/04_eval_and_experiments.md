@@ -174,14 +174,36 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   which was read as "not distinguished". Keeping those seeds and adding 150 more (1000-1199)
   gives 104/200 (52.0 % [45.0 %, 58.5 %]) against 138/200 (69.0 %), exact McNemar p < 0.001; the
   first 50 reproduce exactly, so the earlier reading was a power problem, not a different result.
-  Coverage is 0.895 [0.872, 0.917] against 0.915 (~2 pp), and the outcome gap sits where that
-  difference meets the hard 0.95 threshold: 64 episodes land in [0.90, 0.95), where this repo
-  succeeds 0 times and the checkpoint 42. Coverage still reproduces the card; success does not,
-  and no root cause is established -- E0's criterion in `docs/00` is now PARTIAL.
+  Coverage is 0.895 [0.872, 0.917]; the block's own 0.915 is a **censored lower bound** --
+  gym-pusht clips reward at 1.0, so all 138 of its successes on these seeds record exactly 0.95.
+  The outcome gap has two components,
+  now visible in `results/tables/generality.md`'s coverage bins: 64 episodes land in
+  [0.90, 0.95), where this repo succeeds 0 times and the checkpoint 42 (the hard threshold
+  meeting a small coverage deficit), and 32 episodes score below 0.90 here, where the checkpoint
+  still succeeds 22 times -- rollouts that fail outright rather than narrowly. Neither metric
+  reproduces once that censoring is accounted for (on the 32 episodes both runs fail, coverage is
+  0.850 against 0.832), and no root cause is established -- E0's criterion in `docs/00` is now
+  PARTIAL.
 - **2026-10-29: VQ-BeT's 54 % was replicated on a disjoint block.** `just eval-vqbet-replication`
   ran seeds 100200-100399 (`results/vqbet_replication.jsonl`), which share no episode with the
   first block: 108/200 against 108/200, two-sided Fisher exact p = 1.00, coverage 0.777 against
   0.818. Independent blocks get an independent test; McNemar applies only to the paired ones.
+
+- **2026-10-29: the diffusion gap is not action scaling, and not a global coverage offset.**
+  Two diagnostics. (i) Their per-episode coverage is censored: gym-pusht reports
+  `reward = clip(coverage / 0.95, 0, 1)`, so all 138 of their successes on the 200 shared seeds
+  record exactly 0.95 and their 0.915 mean is a lower bound. On the 32 episodes both runs fail --
+  the only uncensored comparison -- coverage is 0.850 here against 0.832: parity, which rules out
+  both a multiplicative action-scale error and a global input-normalization offset. (ii)
+  `results/e0_published_seeds_ddpm.jsonl` (50 shared seeds, the checkpoint's own DDPM@100,
+  `just eval-dp-published-ddpm`) is 30/50 (60.0 %) against their 37/50 (74.0 %), exact McNemar
+  p = 0.14 -- no better than our DDIM@10 at 32/50 (p = 0.40) and ten times slower, so truncated
+  sampling is not the cause either. What remains is an upper-tail difference: of the 64 episodes
+  that land in [0.90, 0.95) here, the checkpoint crosses 0.95 in 42, and a +0.02 coverage shift
+  would flip 35 of the 64. That is consistent with a small upper-tail shift whose source is not
+  identified; note also that the initial noise draw is ours (seeded per episode), not the
+  checkpoint's, so per-seed outcomes are not expected to align exactly (both-fail coverage
+  correlation -0.02).
 
 ## 5. Acceptance criteria
 - [x] Harness test: eval/train seed overlap raises an error (`tests/unit/test_eval_seeds.py`, asserted in `rollout.evaluate`).

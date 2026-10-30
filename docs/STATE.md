@@ -39,13 +39,15 @@ Both half-fixes were then measured properly on 2026-10-29:
 - **Diffusion, 200 shared seeds** (`results/e0_published_seeds.jsonl`, seeds 1000-1199, which
   are inside the checkpoint's block and the original E0 block is not): 104/200 (52.0 %
   [45.0 %, 58.5 %]) against the checkpoint's own 138/200 (69.0 %), 106 agreeing, 30 succeeding
-  only here and 64 only there, exact McNemar p < 0.001. Coverage 0.895 [0.872, 0.917] against
-  0.915. **The 50-seed version of this test was underpowered and its "not distinguished"
-  reading was wrong**: the first 50 seeds reproduce exactly (32/50), and the gap is
-  concentrated where coverage lands just under the success threshold -- 64 episodes sit in
-  [0.90, 0.95), where this repo succeeds 0 times and the checkpoint 42. Coverage reproduces the
-  card once the units are right (its 0.955 is `max_reward`, implying 0.907); success does not
-  reproduce, and no root cause is established.
+  only here and 64  only there, exact McNemar p < 0.001. Coverage 0.895 [0.872, 0.917] here against 0.915 there,
+  but theirs is a **censored lower bound**: gym-pusht clips reward at 1.0, so all 138 of its
+  successes record exactly 0.95 (and the card's 0.955 implies only 0.907), and only its failures
+  carry a real number. On the 32 episodes both runs fail -- the only like-for-like coverage
+  comparison -- it is 0.850 against 0.832. **The 50-seed version of this test was underpowered
+  and its "not distinguished" reading was wrong**: the first 50 seeds reproduce exactly (32/50),
+  and the gap sits where coverage lands just under the success threshold -- 64 episodes sit in
+  [0.90, 0.95), where this repo succeeds 0 times and the checkpoint 42. So neither success nor
+  coverage is shown to reproduce; no root cause is established.
 - **VQ-BeT replication, disjoint 200-seed block** (`results/vqbet_replication.jsonl`, seeds
   100200-100399): 108/200 (54.0 %) against 108/200 (54.0 %) on the first block, two-sided
   Fisher exact p = 1.00; coverage 0.777 against 0.818. The success rate repeats on episodes the
@@ -196,9 +198,10 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   seeds 10000-10049, against the model card's 65.4 % / 0.907 coverage. `results/e0.jsonl`,
   `results/tables/e0_validation.md`. This is the project's reproduction check, and the honest
   summary after 2026-10-29 is narrower than it was: on 200 paired episodes of the checkpoint's
-  own seed block (1000-1199) coverage reproduces (0.895 against 0.915) but success does not
-  (104/200 against 138/200, exact McNemar p < 0.001, `results/e0_published_seeds.jsonl`). The
-  earlier 50-seed read of p = 0.40 was a power problem.
+  own seed block (1000-1199) neither metric is shown to reproduce: coverage is 0.895 against a
+  censored lower bound of 0.915, and success is 104/200 against 138/200 (exact McNemar
+  p < 0.001, `results/e0_published_seeds.jsonl`). The earlier 50-seed read of p = 0.40 was a
+  power problem.
 - **Latency at the operating point** (batch 1, fp32, single process, measured before the
   eval runs): 20.7 ms at N=1, 178.3 ms at N=10, 1766.6 ms at N=100. Peak VRAM 1125 MiB.
 - **E3 (DDIM ladder, 300 episodes)**: coverage 0.121 [0.076, 0.165] at N=1, 0.716 [0.627,

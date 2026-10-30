@@ -380,7 +380,8 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, 
 
     `published` rows come from `scripts/published_blocks.py`. Their `coverage` column is
     `max_reward * 0.95`, because gym-pusht reports reward as `clip(coverage / 0.95, 0, 1)`;
-    comparing our coverage against their raw `max_reward` invents a 5 % gap.
+    comparing our coverage against their raw `max_reward` invents a 5 % gap. The clip also
+    censors successes at 0.95, so their mean is a lower bound rather than a measurement.
     """
     theirs = {int(row["eval_seed"]): row for row in published}
     shared = [row for row in ours if int(row["eval_seed"]) in theirs]
@@ -416,12 +417,64 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, 
         f"({o_ok / n:.1%}) against the checkpoint's own block {t_ok}/{n} ({t_ok / n:.1%}); "
         f"{n - ours_only - theirs_only} episodes agree, {ours_only} succeed only here and "
         f"{theirs_only} only there, exact McNemar {p_text}, so {verdict}. Mean coverage "
-        f"{o_cov:.3f} here against {t_cov:.3f} there (their `max_reward` is rescaled: it is "
-        f"coverage / 0.95). Their published block is {pub_ok}/{len(published)} = "
+        f"{o_cov:.3f} here; their block reports {t_cov:.3f}, which is only a lower bound -- "
+        f"gym-pusht clips reward at 1.0, so every success records exactly 0.95 whatever its "
+        f"true coverage. Their published block is {pub_ok}/{len(published)} = "
         f"{pub_ok / len(published):.1%} over {len(published)} episodes, and these shared seeds "
         f"are a sub-block of it. Source: `results/{family}_published.jsonl` "
         f"(`scripts/published_blocks.py`)."
     )
+
+
+COVERAGE_BINS = ((0.0, 0.50), (0.50, 0.80), (0.80, 0.90), (0.90, 0.95), (0.95, 1.01))
+
+
+def coverage_bin_table(ours: list[dict[str, Any]], published: list[dict[str, Any]]) -> str:
+    """Split a paired block by the coverage we reached, and count success on both sides.
+
+    The diffusion gap is not uniform: it lives at the top of the coverage range, where the hard
+    0.95 success threshold turns a small coverage difference into most of the outcome difference.
+    A single mean coverage hides that, so the bins make the mechanism checkable from results
+    rather than argued in prose.
+
+    Their per-episode coverage is censored at 0.95 (gym-pusht clips reward at 1.0), so the only
+    comparable values are on episodes their block fails. That column averages their failures and
+    prints "-" where a bin has none; it is the closest thing to a like-for-like comparison.
+    """
+    theirs = {int(row["eval_seed"]): row for row in published}
+    shared = [row for row in ours if int(row["eval_seed"]) in theirs]
+    if not shared:
+        return ""
+    lines = [
+        "Where the diffusion gap sits (episodes binned by the coverage this repo reached; "
+        "success counted on both sides for the same seeds):",
+        "",
+        "| Our coverage | Episodes | Success here | Success in its block | Mean coverage here "
+        "| Its coverage, failures only |",
+        "|---|---|---|---|---|---|",
+    ]
+    for lo, hi in COVERAGE_BINS:
+        group = [row for row in shared if lo <= float(row["coverage"]) < hi]
+        if not group:
+            continue
+        o_ok = sum(int(row["success"]) for row in group)
+        t_ok = sum(int(theirs[int(row["eval_seed"])]["success"]) for row in group)
+        o_cov = sum(float(row["coverage"]) for row in group) / len(group)
+        failures = [
+            theirs[int(row["eval_seed"])]
+            for row in group
+            if not theirs[int(row["eval_seed"])]["success"]
+        ]
+        t_cov = (
+            f"{sum(float(row['coverage']) for row in failures) / len(failures):.3f}"
+            if failures
+            else "-"
+        )
+        upper = "1.00" if hi > 1.0 else f"{hi:.2f}"
+        lines.append(
+            f"| {lo:.2f}-{upper} | {len(group)} | {o_ok} | {t_ok} | {o_cov:.3f} | {t_cov} |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def replication_note(primary: list[dict[str, Any]], replication: list[dict[str, Any]]) -> str:
@@ -519,6 +572,10 @@ def generality_table(
         note = paired_note(ours, block, family=family)
         if note:
             lines += ["", note]
+        if family == "diffusion":
+            bins = coverage_bin_table(ours, block)
+            if bins:
+                lines += ["", bins]
     replication = replication_note(vqbet_rows, vqbet_replication or [])
     if replication:
         lines += ["", replication]

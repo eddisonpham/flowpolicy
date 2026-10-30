@@ -23,14 +23,13 @@ contradicted the plan.
   precomputed on the device** -- equal to the reference sampler to fp32 rounding (max 0.02 px on
   a 512 px action space, both on a toy denoiser and on the checkpoint), pinned by 9 unit tests
   and a GPU regression test.
-- **Reproduced a published Diffusion Policy's coverage on an independently built harness, and
-  reported where its success does not reproduce**: 0.924 mean coverage over 50 paired PushT
-  episodes (0.895 over 200 on the checkpoint's own seed block) against the model card's 0.907
-  implied coverage (its 0.955 column is `max_reward`) -- **after restoring eight normalization
-  tensors that the current library release silently drops at load time**. Success is 104/200
-  against the checkpoint's own 138/200 on those seeds (exact McNemar p < 0.001): a 17-point gap
-  that 50 seeds had hidden, concentrated where coverage lands just under the 0.95 threshold,
-  written up as open rather than explained away.
+- **Matched a published Diffusion Policy's coverage where the two runs can actually be compared,
+  and showed where it does not reproduce**: on the 32 episodes both runs fail, 0.850 against
+  0.832 mean coverage; on 200 paired episodes of the checkpoint's own seed block, success is
+  104/200 against its 138/200 (exact McNemar p < 0.001) -- a 17-point gap that 50 seeds had
+  hidden. Its reported 0.915 coverage is a lower bound, not a measurement, because gym-pusht
+  clips reward at 1.0 so every success records exactly 0.95 -- **after restoring eight
+  normalization tensors that the current library release silently drops at load time**.
 - **Determined that a 100 ms control period admits at most 4 sampler steps on an 8 GB laptop
   GPU**: 65-73 ms per action chunk at N=4 versus 160-183 ms at N=10, which meant 27-33 missed
   deadlines per episode at N=10 and none at N=4 -- **by sweeping the sampler ladder (300

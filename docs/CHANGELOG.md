@@ -375,18 +375,37 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   106 agreeing, 30 succeeding only here and 64 only there, exact McNemar p < 0.001. The first 50
   seeds of that same run reproduce the earlier block exactly (32/50), so this is not drift: at
   five times the sample the gap is real.
-- **What the gap is made of.** Coverage is 0.895 [0.872, 0.917] against 0.915, i.e. ~2 pp lower,
-  and because success is a hard `coverage > 0.95` threshold that difference carries the outcomes:
-  64 episodes land in [0.90, 0.95), where this repo crosses the threshold 0 times and the
-  checkpoint 42. No root cause is established, so it is recorded as open rather than explained.
+- **What the gap is made of.** Our coverage is 0.895 [0.872, 0.917]; theirs reports 0.915, which
+  is a **censored lower bound** (next bullet), so the two means cannot show a 2 pp deficit. On the
+  32 episodes both runs fail -- the only like-for-like coverage comparison -- it is 0.850 against
+  0.832. Success is a hard `coverage > 0.95` threshold, and the outcomes differ there: 64 episodes
+  land in [0.90, 0.95), where this repo crosses the threshold 0 times and the checkpoint 42. No
+  root cause is established, so it is recorded as open rather than explained.
+- **Correction: the published coverage column is clipped.** gym-pusht computes
+  `reward = clip(coverage / 0.95, 0, 1)`, so all 327 of the diffusion block's successes (138 of
+  them on our 200 seeds) report exactly 0.95 whatever their true coverage; VQ-BeT's block is the
+  same (285/285). Their mean is a lower bound, and the earlier "coverage reproduces (0.895 against
+  0.915)" reading in this entry was not supported. `published_blocks.py` now writes
+  `coverage_censored`, `paired_note` says "lower bound", and the bin table averages their failures
+  only, printing `-` where a bin has none.
 - **Consequence for E0's headline.** The project no longer claims it reproduces the checkpoint's
-  success rate: coverage reproduces (0.924 on the gate block, 0.895 against the 0.907 the card's
-  0.955 `max_reward` implies), success does not. `docs/00` moves the criterion from PASS to
+  headline: success is 52.0 % against 69.0 %, and coverage is 0.895 against a censored bound of
+  0.915 (the card's 0.907 is the same kind of bound). `docs/00` moves the criterion from PASS to
   PARTIAL, and the README, `docs/04`, `docs/STATE`, `docs/MODEL_CARD` and `docs/RESUME` say so.
 - **VQ-BeT replicates.** A disjoint 200-seed block (`just eval-vqbet-replication`, seeds
   100200-100399, `results/vqbet_replication.jsonl`) gives 108/200 (54.0 %) against the first
   block's 108/200, two-sided Fisher exact p = 1.00; coverage 0.777 against 0.818. The success
   rate is a property of the policy, not of the seed block.
+- **Diagnosis: neither action scaling nor coverage calibration.** Their coverage is censored at
+  0.95 (all 138 shared-seed successes report exactly 0.95), so their mean is a bound. On the 32
+  episodes both runs fail -- the only uncensored comparison -- it is 0.850 here against 0.832,
+  which rules out a multiplicative action-scale error and a global normalization offset. The
+  checkpoint's own DDPM@100 on the same 50 seeds (`just eval-dp-published-ddpm`,
+  `results/e0_published_seeds_ddpm.jsonl`) gives 30/50 (60.0 %) against their 37/50 (74.0 %),
+  p = 0.14 -- no better than DDIM@10's 32/50 and ten times slower, so truncated sampling is not
+  it either. What is left is an upper-tail shift: 42 of the 64 episodes in [0.90, 0.95) are
+  successes for the checkpoint, and +0.02 coverage would flip 35 of the 64. Source not
+  identified.
 - **Code:** `make_tables.replication_note` computes the independent-block test and `paired_note`
   prints `p < 0.001` instead of rounding to `0.00`; both notes carry the seed range, so a
   200-episode note cannot be mistaken for a 50-episode table row. Five unit tests for the Fisher

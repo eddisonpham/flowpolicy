@@ -135,11 +135,12 @@ seed to resample; and these two rows ran with two rollout workers sharing the GP
 latency column is roughly 2x the clean single-process numbers in E9.
 
 On the checkpoint's own seed block the comparison can be paired, and at 200 episodes it stops
-flattering us: 104/200 against the checkpoint's 138/200, exact McNemar p < 0.001. Coverage
-reproduces (0.895 [0.872, 0.917] against 0.915), so what separates the runs is a ~2 pp coverage
-difference meeting a hard 0.95 success threshold -- 64 episodes land in [0.90, 0.95), where this
-repo crosses it zero times and the checkpoint 42. That is recorded as open, not explained
-(`docs/04` section 4).
+flattering us: 104/200 against the checkpoint's 138/200, exact McNemar p < 0.001. Its coverage
+column cannot settle the rest: gym-pusht clips reward at 1.0, so every one of its successes
+records exactly 0.95 and its 0.915 mean is a lower bound. The one like-for-like comparison is
+the 32 episodes both runs fail -- 0.850 here against 0.832 there. So the difference is in how
+often the pusher clears the 0.95 line: 64 episodes sit in [0.90, 0.95), where this repo crosses
+it zero times and the checkpoint 42. Recorded as open, not explained (`docs/04` section 4).
 
 Reading it: the checkpoint's own 100-step DDPM sampling is over ten times slower per chunk
 than 10-step DDIM and no better here (compare the two rows), which is the first hint that this

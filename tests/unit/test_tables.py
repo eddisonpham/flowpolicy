@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from scripts.make_tables import _fisher_exact, replication_note
+from scripts.make_tables import _fisher_exact, coverage_bin_table, replication_note
 
 pytestmark = pytest.mark.unit
 
@@ -50,3 +50,25 @@ def test_replication_note_refuses_to_call_a_collapse_a_repeat() -> None:
 
 def test_replication_note_is_empty_without_a_second_block() -> None:
     assert replication_note([_row(1, True)], []) == ""
+
+
+def test_coverage_bins_are_counted_per_bin_and_paired_by_seed() -> None:
+    ours = [_row(1, False, 0.85), _row(2, False, 0.93), _row(3, True, 0.96)]
+    published = [
+        {"eval_seed": 1, "success": 1, "coverage": 0.96},
+        {"eval_seed": 2, "success": 0, "coverage": 0.91},
+        {"eval_seed": 3, "success": 1, "coverage": 0.97},
+        # Not in our block, so it must not be counted anywhere.
+        {"eval_seed": 99, "success": 1, "coverage": 0.99},
+    ]
+    table = coverage_bin_table(ours, published)
+    # Their coverage is censored at 0.95 for successes, so only their failures carry a mean.
+    assert "| 0.80-0.90 | 1 | 0 | 1 | 0.850 | - |" in table
+    assert "| 0.90-0.95 | 1 | 0 | 0 | 0.930 | 0.910 |" in table
+    assert "| 0.95-1.00 | 1 | 1 | 1 | 0.960 | - |" in table
+    assert "| 0.00-0.50 |" not in table  # empty bins are dropped, not printed as zero
+    assert "| 0.50-0.80 |" not in table
+
+
+def test_coverage_bin_table_is_empty_without_a_published_block() -> None:
+    assert coverage_bin_table([_row(1, True, 0.99)], []) == ""
