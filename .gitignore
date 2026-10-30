@@ -27,6 +27,8 @@ venv/
 # Migrated checkpoint + rendered control videos: rebuilt by scripts/lerobot_migrate.py.
 checkpoints/diffusion_pusht_migrated/
 results/lerobot_control/videos/
+# Renders lerobot writes into each control output dir; the rows are the measurement, the mp4s are not.
+results/lerobot_control/**/videos/
 
 # --- Tool caches / coverage ---
 .pytest_cache/
