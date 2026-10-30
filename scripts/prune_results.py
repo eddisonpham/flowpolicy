@@ -25,7 +25,7 @@ def main() -> None:
         for row in rows
         if not any(str(row.get("config_id", "")).startswith(p) for p in args.prefix)
     ]
-    args.path.write_text("".join(json.dumps(row) + "\n" for row in kept))
+    args.path.write_text("".join(json.dumps(row) + "\n" for row in kept), newline="\n")
     print(f"{args.path}: kept {len(kept)} of {len(rows)} rows")
 
 

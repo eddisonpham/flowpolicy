@@ -340,7 +340,7 @@ def evaluate(
                 int(noise_seed_offset),
             ),
         ) as pool,
-        partial.open("w", encoding="utf-8") as partial_fh,
+        partial.open("w", encoding="utf-8", newline="\n") as partial_fh,
     ):
         for part in pool.map(_run_episodes, [c for c in chunks if c]):
             for row in part:
@@ -354,7 +354,7 @@ def evaluate(
                 partial_fh.write(json.dumps(row) + "\n")
             partial_fh.flush()
             results.extend(part)
-    with out.open("a", encoding="utf-8") as fh:
+    with out.open("a", encoding="utf-8", newline="\n") as fh:
         fh.write(partial.read_text(encoding="utf-8"))
     partial.unlink()
     return results

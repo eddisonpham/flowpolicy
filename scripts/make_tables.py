@@ -579,7 +579,9 @@ def main() -> None:
             print(f"skip {name}: {path} missing or empty")
             continue
         text = fn(rows)
-        (OUT / name).write_text(text)
+        # newline="\n": `.gitattributes` normalizes the repo to LF; the default Windows
+        # translation would rewrite every table as CRLF on each regeneration.
+        (OUT / name).write_text(text, newline="\n")
         print(f"wrote {OUT / name} ({len(rows)} rows)")
     headline = headline_table(
         {
@@ -594,7 +596,7 @@ def main() -> None:
             "e14": read(ROOT / "stack.jsonl"),
         }
     )
-    (OUT / "headline.md").write_text(headline)
+    (OUT / "headline.md").write_text(headline, newline="\n")
     print(f"wrote {OUT / 'headline.md'}")
 
     vqbet = read(ROOT / "vqbet.jsonl")
@@ -609,23 +611,28 @@ def main() -> None:
                 diffusion_paired=read(ROOT / "e0_published_seeds.jsonl"),
                 diffusion_published=read(ROOT / "diffusion_published.jsonl"),
                 vqbet_replication=read(ROOT / "vqbet_replication.jsonl"),
-            )
+            ),
+            newline="\n",
         )
         print(f"wrote {OUT / 'generality.md'}")
 
     replication = read(ROOT / "e3_replication.jsonl")
     if replication:
         primary = read(ROOT / "e3.jsonl")
-        (OUT / "e3_replication.md").write_text(e3_replication_table(primary, replication))
+        (OUT / "e3_replication.md").write_text(
+            e3_replication_table(primary, replication), newline="\n"
+        )
         print(f"wrote {OUT / 'e3_replication.md'} ({len(replication)} rows)")
 
     kernel_rows = read(ABLATION / "kernel.jsonl")
     if kernel_rows:
-        (OUT / "kernel.md").write_text(kernel_table(kernel_rows))
+        (OUT / "kernel.md").write_text(kernel_table(kernel_rows), newline="\n")
         print(f"wrote {OUT / 'kernel.md'} ({len(kernel_rows)} rows)")
     overfit_path = ROOT / "overfit" / "summary.json"
     if overfit_path.exists():
-        (OUT / "overfit.md").write_text(overfit_table(json.loads(overfit_path.read_text())))
+        (OUT / "overfit.md").write_text(
+            overfit_table(json.loads(overfit_path.read_text())), newline="\n"
+        )
         print(f"wrote {OUT / 'overfit.md'}")
 
 

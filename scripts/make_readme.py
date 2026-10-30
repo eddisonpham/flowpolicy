@@ -33,7 +33,9 @@ def main() -> None:
         p = Path(path)
         text = p.read_text() if p.exists() else f"_{path} not generated yet_"
         template = template.replace(marker, text.strip())
-    Path("README.md").write_text(template)
+    # newline="\n": the repo normalizes to LF (`.gitattributes`), and the default Windows
+    # translation writes CRLF, which makes every regeneration show up as a 500-line diff.
+    Path("README.md").write_text(template, newline="\n")
     print("wrote README.md")
 
 
