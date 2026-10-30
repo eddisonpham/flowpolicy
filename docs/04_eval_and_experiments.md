@@ -205,6 +205,37 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   checkpoint's, so per-seed outcomes are not expected to align exactly (both-fail coverage
   correlation -0.02).
 
+- **2026-10-29: the published 69 % cannot be re-run on this stack, and that bounds the gap.**
+  The planned discriminator was to run the checkpoint's *own* eval script
+  (`lerobot-eval --env.type=pusht`) in this environment on the same seeds: a 69 % result would
+  blame our adapter, a 52 % result would exculpate it. It does not run, for two separate
+  reasons, both measured. (i) `av` 19.0.1 breaks the import
+  (`module 'av' has no attribute 'option'`; lerobot's own extra caps `av<16`). (ii) After
+  pinning `av` 15.1.0 the run reaches `make_policy`/`make_pre_post_processors` and raises
+  `ProcessorMigrationError: ... Config file 'policy_preprocessor.json' not found` -- the 2024
+  checkpoint predates the 2026 processor format, which is exactly the mismatch
+  `models/pretrained.py` exists to bridge. So the checkpoint's own eval path cannot regenerate
+  its published block in this library generation: "their 138/200" is a pinned artifact, not a
+  run this host can repeat. The `av` pin was a local experiment only -- `uv.lock` is unchanged
+  and `uv sync` restores 19.0.1.
+- **2026-10-29: the remaining mechanisms were checked and excluded one at a time.** (a)
+  *Normalization buffers*: all eight read from `model.safetensors` have the right shapes -- the
+  means/stds are `(3,1,1)`, so the subtraction is per channel rather than over the last axis --
+  and the mapping matches the checkpoint's own `normalization_mapping` (VISUAL MEAN_STD, STATE
+  and ACTION MIN_MAX). (b) *The 84x84 crop*: `crop_shape=[84,84]` is applied inside
+  `DiffusionRgbEncoder.forward`, so both the stock and the fast path get it; the adapter cannot
+  be skipping it, and it also means a 384-px observation fed without a resize would be
+  catastrophic rather than a 2 pp effect. (c) *Action slicing*: `generate_actions` returns
+  `actions[:, n_obs_steps-1 : n_obs_steps-1+n_action_steps]` (indices 1-8) and the rollout
+  executes indices 0-7 of that window, so the action applied is the one predicted for the
+  newest observation in both loops -- no one-step offset. (d) *Observation rendering*:
+  gym-pusht draws at 512 and resizes to the requested size, so a 96-px frame and a resampled
+  larger frame are the same picture, and the only size-dependent drawing (the action marker)
+  is drawn for visualization only. (e) *Observation history*: `select_action` fills its 2-frame
+  queue before predicting, padding by repeating the first frame, which is what the rollout
+  deque does at reset. With (a)-(e) excluded, plus DDPM@100 at p = 0.14, nothing remains in
+  the adapter or the loop to point at: the gap stays unexplained and is reported that way.
+
 ## 5. Acceptance criteria
 - [x] Harness test: eval/train seed overlap raises an error (`tests/unit/test_eval_seeds.py`, asserted in `rollout.evaluate`).
 - [x] A figure script exists for every figure that was run: E0, E3 (both panels), E10 (success curve and latency histogram) and the ablation bar regenerates from raw JSONL with `just figures`. E11 was never run, so it has no figure.

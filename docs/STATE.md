@@ -259,6 +259,15 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   `uv sync --frozen` then `pytest -m "unit and not gpu"` -> 57 passed.
 - One checkpoint exists for PushT, so E0/E3/E9/E10 intervals are episode-level and there is
   no seed-to-seed variance to report. Stated on every table that has pretrained rows.
+- **The diffusion reference block cannot be regenerated on this stack (2026-10-29).** Running
+  the checkpoint's own `lerobot-eval` here fails twice: `av` 19.0.1 has no `av.option` (the
+  library caps `av<16`), and with `av` 15.1.0 the run raises `ProcessorMigrationError` because
+  the 2024 checkpoint ships no `policy_preprocessor.json`. So "their 138/200" is a pinned
+  artifact of a different library generation, not a number this host can re-derive. The
+  adapter and loop were audited instead and every mechanism was excluded -- normalization
+  buffers, the 84x84 crop, action slicing, observation rendering, observation history and
+  truncated sampling (DDPM@100 p = 0.14) -- so the 200-seed gap is still unexplained and is
+  written up as unexplained (`docs/04` section 4, 2026-10-29).
 - `lerobot` lives outside `uv.lock` (it caps torch < 2.12) and `just setup` prunes it;
   `diffusers` is locked in `dev`, so the unit gate no longer depends on the backend. The
   lerobot half is still documented rather than solved.

@@ -414,3 +414,24 @@ Paths in entries below refer to where files lived on the date of the entry. The 
 - **Housekeeping:** the two run logs a previous `git add -A` swept in are removed and
   `results/logs/` is ignored.
 - Tests: 66 CPU unit tests (from 61).
+
+## 2026-10-29 (later): the gap is bounded, not explained
+
+- **The planned discriminator does not run, and that is the finding.** Running the checkpoint's
+  own `lerobot-eval` here fails twice. `av` 19.0.1 breaks the import (`module 'av' has no
+  attribute 'option'`; the library caps `av<16`); pinning `av` 15.1.0 locally gets past that and
+  then `make_pre_post_processors` raises `ProcessorMigrationError` -- the 2024 checkpoint ships no
+  `policy_preprocessor.json`, which is the exact mismatch `models/pretrained.py` bridges. Their
+  eval path cannot regenerate their published block in this library generation, so the 69 %
+  reference is a pinned artifact rather than a run this host can repeat. The `av` pin was a local
+  experiment: `uv.lock` is untouched and `uv sync` restores 19.0.1.
+- **Every mechanism the audit could reach is excluded.** The eight normalization buffers have the
+  right shapes (means/stds are `(3,1,1)`, so the subtraction is per channel) and the config's own
+  MEAN_STD/MIN_MAX mapping; `crop_shape=[84,84]` is applied inside `DiffusionRgbEncoder.forward`
+  so both paths get it; `generate_actions` already returns indices 1-8 and the rollout consumes
+  0-7 of that window, so there is no one-step offset; gym-pusht renders at 512 and resizes, so
+  observation size is not a state difference; and `select_action`'s 2-frame queue pads exactly
+  the way the rollout deque does. Together with DDPM@100 at p = 0.14 that leaves nothing in the
+  adapter or the loop to point at.
+- Recorded as unexplained in `docs/04` section 4 with the exclusion list, and in `docs/STATE`'s
+  open items, rather than closed with a guess.
