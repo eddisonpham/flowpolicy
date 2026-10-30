@@ -48,6 +48,17 @@ opposite direction: the ~64 % PushT figure *is* reproduced, by the pretrained ch
 the from-scratch route is written off as a scaled-budget ablation rather than a failed
 reproduction.
 
+Outcomes as of 2026-10-30: R5's environment half is measured, not assumed. `just env-equiv` steps
+one seed through this repo's `PushTEnv` and through `lerobot`'s env stack with a fixed 300-action
+sequence: coverage and success traces agree to 0.0 at every step, the termination step matches and
+the first observation is bit-identical (`results/env_equiv.json`). So the two wrappers are the same
+environment, and the R5 wording "reported as a finding" now applies only to the original PushT
+code path, which nothing here runs. R14 (silent normalization mismatch) is also answered on the
+diffusion path: `just processor-equiv` shows the checkpoint's buffers and `lerobot`'s migrated
+pipelines agree to 2.4e-07 on images and 0.0 on state and actions (`results/processor_equiv.json`),
+so the hand-applied mapping is the library's mapping. Neither result changes a decision; both
+remove a hypothesis from the next stage's search.
+
 Outcomes as of 2026-10-19: R2 cleared (G5 passes with `triton-windows`). R3 triggered and accepted (no `nvcc`, D6 closed). R4 triggered and accepted (robosim not installed, G8 NOT RUN, D1 = PushT only). R5 remains open (no original-env equivalence check; reported as a finding, not a pass). R6 triggered: the 1800-step DDPM baseline reaches 0% success, so no reproduction is claimed and the fallback "write up why; proceed with relative comparisons" was used. R8 triggered: the budget is 1800 steps; 3 seeds were kept for E1 and every result is labelled scaled-down. R9 triggered: Docker absent, plain Python loop (D7). R10 handled: tests and docs say tolerance-based (`rtol=1e-5`), never bit-exact.
 
 ## 3. Acceptance criteria

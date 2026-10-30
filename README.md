@@ -181,10 +181,29 @@ it zero times and the checkpoint 42. Recorded as open, not explained (`docs/04` 
 
 The reference itself is reproducible here: the same checkpoint, run through `lerobot`'s own eval
 loop in an isolated environment (`just lerobot-env && just lerobot-control`), scores 134/200
-(67.0 %) on those seeds against its block's 69.0 % (Fisher p = 0.75). So the 15-point shortfall
-is in this repo's path rather than in the checkpoint or the seeds -- but it is not yet split
-between the sampler (that control runs the checkpoint's own DDPM@100; E0 is DDIM@10) and the
-adapter. The missing cell is this harness at DDPM@100 over all 200 seeds.
+(67.0 %) on those seeds against its block's 69.0 % (Fisher p = 0.75). That does **not** turn the
+remaining gap into an adapter shortfall. The figure that reached this README as "15 points" was a
+cross-sampler artefact: 10-step DDIM here against a control running the checkpoint's own DDPM@100,
+which charges the sampler's share to the adapter. Measured like-for-like -- same sampler, same 200
+seeds -- this harness scores 118/200 (59.0 %), and the paired control (126/200, one row per episode
+via `just lerobot-control-rows`) is not separated from it: 40 episodes ours alone, 48 the control's
+alone, exact McNemar p = 0.46. Nor is the residual larger than the control's own noise: that loop
+has now been repeated, and five runs of it score 126, 128, 125, 123 and 127 of 200 -- 62.9 % with
+a 1.0 pp standard deviation (range 61.5-64.0 %), which puts the gap at +3.9 pp and gives an interval
+that spans zero, [-5.5, +13.0] pp, when episodes and runs are resampled together
+(`just control-spread`, `results/lerobot_control/spread.json`). The 134/200 (67.0 %) quoted above
+is a single run of the *other* entry point into the same loop -- the plain `lerobot-eval`
+invocation, which writes only an aggregate -- so it is not a sixth sample of that distribution: it
+sits about 4 sd outside the repeated band, and that path has never been repeated against itself,
+so its 4 pp offset is recorded as unexplained rather than counted as spread. So what survives is
+roughly 4 points that this design cannot resolve at 200 episodes, and it is not attributed to the
+adapter: the two
+mechanisms that could have produced a real adapter loss are excluded by measurement rather than
+argument -- the checkpoint's normalization buffers and `lerobot`'s processor pipelines compute the
+same arithmetic to 2.4e-07 over 20 real frames (`just processor-equiv`), and the two environment
+wrappers produce identical coverage traces, step for step (`just env-equiv`). E0 stays PARTIAL;
+what changed is attribution -- one measured sampler cost, one unresolved residual, and no located
+adapter defect at 200-episode resolution.
 
 Reading it: the checkpoint's own 100-step DDPM sampling is over ten times slower per chunk
 than 10-step DDIM and no better here (compare the two rows), which is the first hint that this

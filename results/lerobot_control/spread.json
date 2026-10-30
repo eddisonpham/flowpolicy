@@ -1,0 +1,92 @@
+{
+  "ours": "results\\e0_published_seeds_ddpm.jsonl",
+  "runs": [
+    {
+      "path": "results\\lerobot_control\\rows.jsonl",
+      "n": 200,
+      "success": 126,
+      "rate": 0.63,
+      "shared_seeds": 200,
+      "pairing": {
+        "both": 78,
+        "ours_only": 40,
+        "control_only": 48,
+        "neither": 34
+      },
+      "mcnemar_p": 0.45574127943791326,
+      "delta_vs_ours": 0.040000000000000036
+    },
+    {
+      "path": "results\\lerobot_control\\repeats\\r2.jsonl",
+      "n": 200,
+      "success": 128,
+      "rate": 0.64,
+      "shared_seeds": 200,
+      "pairing": {
+        "both": 80,
+        "ours_only": 38,
+        "control_only": 48,
+        "neither": 34
+      },
+      "mcnemar_p": 0.3318343545999156,
+      "delta_vs_ours": 0.050000000000000044
+    },
+    {
+      "path": "results\\lerobot_control\\repeats\\r3.jsonl",
+      "n": 200,
+      "success": 125,
+      "rate": 0.625,
+      "shared_seeds": 200,
+      "pairing": {
+        "both": 78,
+        "ours_only": 40,
+        "control_only": 47,
+        "neither": 35
+      },
+      "mcnemar_p": 0.5202915935750737,
+      "delta_vs_ours": 0.03500000000000003
+    },
+    {
+      "path": "results\\lerobot_control\\repeats\\r4.jsonl",
+      "n": 200,
+      "success": 123,
+      "rate": 0.615,
+      "shared_seeds": 200,
+      "pairing": {
+        "both": 80,
+        "ours_only": 38,
+        "control_only": 43,
+        "neither": 39
+      },
+      "mcnemar_p": 0.6569924675863579,
+      "delta_vs_ours": 0.025000000000000022
+    },
+    {
+      "path": "results\\lerobot_control\\repeats\\r5.jsonl",
+      "n": 200,
+      "success": 127,
+      "rate": 0.635,
+      "shared_seeds": 200,
+      "pairing": {
+        "both": 83,
+        "ours_only": 35,
+        "control_only": 44,
+        "neither": 38
+      },
+      "mcnemar_p": 0.3681876338306308,
+      "delta_vs_ours": 0.04500000000000004
+    }
+  ],
+  "control_mean_rate": 0.629,
+  "control_sd_pp": 0.9617692030835681,
+  "control_t_interval": [
+    0.6170599725293449,
+    0.6409400274706551
+  ],
+  "delta_ci_pp": [
+    -5.5,
+    13.0
+  ],
+  "delta_point_pp": 3.9000000000000035,
+  "n_boot": 2000
+}

@@ -113,7 +113,11 @@ crash costs one shard. What is still manual is *which* runs to do and in what or
   load path. The VQ-BeT adapter already does its own normalization, so the two would converge.
 - **Risk:** loses the "measurement machinery is ours" boundary that `docs/07` rule 4 draws —
   it would need an explicit amendment, as D11 got.
-- **Verdict:** contingent. Do not start before A.
+- **Verdict:** contingent, and as of 2026-10-30 **drafted**: the amendment, the audit and the
+  adoption design are in `docs/10`, the seam and the opt-in path are in the tree default-off, and
+  the decision rule is a deterministic probe (`just processor-equiv`, 1e-6) rather than GPU hours.
+  The episode arm only runs if that probe diverges, and then on 600 seeds, not 200: at 200 a real
+  7 pp effect already read p = 0.17.
 
 ## Recommended order
 

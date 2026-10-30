@@ -1,0 +1,16 @@
+{
+  "bar": 1e-06,
+  "n_observations": 20,
+  "seed_start": 1000,
+  "checkpoint": "checkpoints\\diffusion_pusht_migrated",
+  "checks": {
+    "weights": 0.0,
+    "image": 2.384185791015625e-07,
+    "state": 0.0,
+    "actions": 0.0,
+    "history_order": 0.0
+  },
+  "worst": 2.384185791015625e-07,
+  "pass": true,
+  "verdict": "agree: the two implementations are the same arithmetic, so H is not the explanation"
+}

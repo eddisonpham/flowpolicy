@@ -9,6 +9,52 @@
 | Evidence | `just verify` green (2026-10-30: ruff, ruff format, mypy strict on 29 files, 84 CPU unit tests, 1 smoke test, generated tables/README byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
+## What changed on 2026-10-30 (option H: audited, amended, scaffolded; nothing run yet)
+
+H was the one gated option. It is now an amendment, a design, default-off code with a
+*deterministic* gate -- and **measured: the gate passed, so H is a null.** The 200-episode paired
+control also landed and is null at the checkpoint's own sampler. The diffusion stage therefore
+has one measured sampler cost and **no measured adapter defect** at 200-episode resolution.
+
+- **`just processor-equiv` -> PASS** (`results/processor_equiv.json`): migrated weights identical
+  (0.0), images 2.384e-07 (one fp32 ulp), state 0.0, actions 0.0, history ordering 0.0 -- all
+  inside the pre-registered 1e-6 bar. The checkpoint's buffers and `lerobot`'s processor
+  pipelines are the same arithmetic, so the ~8 pp residual is not normalization.
+- **`just lerobot-control-rows` -> 126/200 (63.0 %)**, 200 unique seeds (`results/lerobot_control/
+  rows.jsonl`). Against our DDPM@100 (118/200): 78 both, 40 / 48 discordant, exact McNemar
+  **p = 0.46 — not separated at the checkpoint's own sampler.** Against DDIM@10: 104 vs 126,
+  35 / 57, p = 0.03 — the only separated comparison left, and it is the sampler.
+- **The control's own spread is 1.0 pp, and the residual is ~4 pp.** Four repeats of the same
+  row-writing command (r2-r5) join the original row file: 126, 128, 125, 123, 127 of 200 =
+  **62.9 % ± 1.0 pp** (range 61.5-64.0). Against our DDPM@100 118/200 that is +3.9 pp with an
+  episodes-and-runs bootstrap of **[-5.5, +13.0] pp** -- a null that spans zero
+  (`results/lerobot_control/spread.json`). The 134/200 run came from the aggregate entry point
+  (`just lerobot-control`) and is n=1, not a draw from this band.
+- **`just env-equiv` -> identical env** (`results/env_equiv.json`): coverage and success traces
+  agree to 0.0 step for step, same termination step, bit-identical first frame. R5's environment
+  half is closed; the env term in loop-to-loop comparisons is zero.
+
+- **The audit re-sized the target: ~4 pp, not 15.** Like-for-like -- same sampler, same 200
+  environment seeds -- the residual is our DDPM@100 118/200 against the adapter-free control's
+  five-run mean of 62.9 %. The 15 pp Fisher figure compared our DDIM@10 against a DDPM@100 control
+  and therefore charged the sampler's share to the adapter; the 8 pp the audit first used came
+  from the control's single 134/200 run.
+- **Neither 200 nor 600 seeds resolve that.** Measured, not modelled: the DDPM arm's +7 pp had 88
+  discordant pairs and p = 0.17, and a 4 pp effect would need more than the 600-seed arm was sized
+  for. A block of either size would return "not distinguished" whether or not the truth was a
+  defect, which is why the deterministic probe is the decision rule.
+- **Flat coverage lowers H's prior.** 0.884-0.895 across every arm from 45.5 % to 69.0 % success
+  means the losses are near-threshold rather than a systematic transform error -- an arithmetic
+  bug usually moves coverage too. Step 0 is a refutation test, and passing it is expected.
+- **Code, default off:** `models/normalization.py` (one declared mapping; `BuffersNorm` /
+  `ProcessorsNorm`; history flatten/restore; the device-step override; the `config_id` guard),
+  `normalization="processors"` threaded through `load_policy` / `evaluate` / `--normalization`,
+  `scripts/processor_equiv.py` (step 0), `scripts/paired_test.py` + `just paired` for the 2x2.
+- **Amendment recorded** in `docs/04` §4 and on rule 4 of `docs/07`, with its four conditions and
+  an explicit "nothing adopted". Audit, design and runbook: `docs/10_processor_adoption.md`.
+- Tests: `tests/unit/test_normalization_protocol.py` pins the seam, the history-order reshape and
+  the guard. The lerobot half is exercised only by the probe, because CI has no `lerobot`.
+
 ## What changed on 2026-10-30 (options pass: three taken, three declined, one gated)
 
 `docs/08` was a menu; this pass worked it in order of risk, one commit per option on branch
@@ -346,11 +392,12 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   migrated copy for seeds 1000-1199, with `use_async_envs=false` because Windows has no
   `forkserver` context. It returned 134/200 (67.0 %) against that block's 138/200 (69.0 %),
   Fisher p = 0.75: **the reference reproduces on this host.** Nothing in the project's locked
-  environment changed. What remains is this repo's own 15 pp shortfall on the same episodes
-  (104/200, Fisher p = 0.003), attributed to the path and now split by the 200-seed DDPM@100 cell filled on 2026-10-30
-  (`docs/09` option A): 118/200 (59.0 %) against DDIM@10's 104/200 on the same episodes, exact
-  McNemar p = 0.17, so the published sampler buys ~7 pp at 4.4x the per-chunk cost and ~8 pp is
-  not sampling.
+  environment changed. The remaining gap is on this repo's side, but it is not a 15 pp adapter
+  shortfall: 15 pp compares DDIM@10 with the control's DDPM@100. The 200-seed DDPM@100 cell
+  filled on 2026-10-30 (`docs/09` option A) scores 118/200 (59.0 %) against DDIM@10's 104/200 on
+  the same episodes, exact McNemar p = 0.17, so the published sampler buys ~7 pp at 4.4x the
+  per-chunk cost and ~8 pp is not sampling -- and that ~8 pp is not separated from the
+  adapter-free control at the same sampler (paired p = 0.46).
 - **The success gap is not the noise stream this repo draws (2026-10-30).** Same 200 seeds, same
   sampler, only the per-episode policy noise seed shifted: 91/200 (45.5 %) against 104/200
   (52.0 %), exact McNemar p = 0.21, coverage 0.884 against 0.895, and only 109/200 episodes
@@ -358,8 +405,11 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   it does not move the rate, and 69 % sits outside both blocks. With normalization buffers, the
   84x84 crop, action slicing, observation rendering, observation history, truncated sampling
   (DDPM@100 p = 0.14) and now the noise stream excluded, the 200-seed gap was unexplained as of
-  that run. The 200-seed DDPM@100 block then bought 7 of the 15 pp (59.0 % against 52.0 %,
-  p = 0.17), leaving ~8 pp to the adapter or the process; `docs/09` option A has the split.
+  that run. The 200-seed DDPM@100 block then bought ~7 pp (59.0 % against 52.0 %, p = 0.17); the
+  ~4 pp that left is not separated from the adapter-free control at that sampler (126/200, five
+  repeats at 62.9 % ± 1.0 pp, paired p = 0.46, bootstrap [-5.5, +13.0] pp) and is no larger than
+  the control's own measured spread, so it is not attributed to the adapter. `docs/09` option A has
+  the split.
 - `lerobot` lives outside `uv.lock` (it caps torch < 2.12) and `just setup` prunes it;
   `diffusers` is locked in `dev`, so the unit gate no longer depends on the backend. The
   lerobot half is still documented rather than solved.

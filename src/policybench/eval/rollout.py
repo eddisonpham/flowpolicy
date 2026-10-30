@@ -22,6 +22,7 @@ from policybench.config import ModelConfig
 from policybench.data.normalizer import Stats
 from policybench.envs.pusht import MAX_STEPS, PushTEnv
 from policybench.eval.metrics import assert_seed_disjoint
+from policybench.models.normalization import config_id_marks_path
 from policybench.models.policies import PolicyLike, build_policy
 from policybench.models.pretrained import PretrainedDiffusionPolicy
 
@@ -36,13 +37,16 @@ def load_policy(
     scheduler: str = "ddim",
     sampler: str = "stock",
     dtype: str = "float32",
+    normalization: str = "buffers",
 ) -> tuple[PolicyLike, dict[str, Any]]:
     """Load a trained checkpoint (`path/last.pt`) or an HF one (`hf:<repo_id>`).
 
     Pretrained rows carry `train_seed = -1`: there is no training seed to resample, so
     their intervals are episode-level (docs/04 section 1). `sampler` selects the DDIM loop
     for the pretrained path ("stock" = lerobot's, "fast" = ours, which compiles and
-    captures); it has no effect on trained checkpoints.
+    captures); it has no effect on trained checkpoints. `normalization` selects whose
+    arithmetic maps units (docs/10, option H); it is default-off and only the diffusion
+    adapter implements the second path.
     """
     if str(checkpoint).startswith("hf:"):
         hf_id = str(checkpoint).removeprefix("hf:")
@@ -50,6 +54,11 @@ def load_policy(
         # a second published policy has to plug in here without touching eval or deploy.
         kind = _hf_policy_type(hf_id)
         if kind == "vqbet":
+            if normalization != "buffers":
+                raise ValueError(
+                    "normalization='processors' is implemented for the diffusion adapter only "
+                    "(docs/10 section 4.3); VQ-BeT carries its own statistics"
+                )
             from policybench.models.pretrained_vqbet import PretrainedVQBeTPolicy
 
             vqbet = PretrainedVQBeTPolicy(hf_id, device=device)
@@ -73,7 +82,12 @@ def load_policy(
                 "this repo has adapters for 'diffusion' and 'vqbet'"
             )
         pretrained = PretrainedDiffusionPolicy(
-            hf_id, device=device, scheduler=scheduler, sampler=sampler, dtype=dtype
+            hf_id,
+            device=device,
+            scheduler=scheduler,
+            sampler=sampler,
+            dtype=dtype,
+            normalization=normalization,
         )
         pretrained.eval()
         return pretrained, {
@@ -227,10 +241,16 @@ def _init_worker(
     sampler: str,
     dtype: str,
     noise_seed_offset: int,
+    normalization: str,
 ) -> None:
     torch.set_num_threads(1)
     policy, meta = load_policy(
-        checkpoint, device=device, scheduler=scheduler, sampler=sampler, dtype=dtype
+        checkpoint,
+        device=device,
+        scheduler=scheduler,
+        sampler=sampler,
+        dtype=dtype,
+        normalization=normalization,
     )
     _WORKER.update(
         policy=policy,
@@ -332,6 +352,7 @@ def evaluate(
     sampler: str = "stock",
     dtype: str = "float32",
     noise_seed_offset: int = 0,
+    normalization: str = "buffers",
 ) -> list[dict[str, Any]]:
     """Run `eval_seeds` and append one JSON line per episode to `out_path`.
 
@@ -346,6 +367,13 @@ def evaluate(
     `.partial` are not re-run, and seeds from any other `config_id` are ignored.
     """
     assert_seed_disjoint(train_seeds, eval_seeds)
+    # The row schema has no normalization field (docs/10 section 4.3), so a non-default path has
+    # to be identifiable from the config_id or two paths' rows become one sample.
+    if not config_id_marks_path(config_id, normalization):
+        raise ValueError(
+            f"config_id {config_id!r} does not mark the {normalization!r} path; "
+            "include 'proc' in the id (docs/10 section 4.3)"
+        )
     checkpoint = str(checkpoint)
     if not use_ema:
         raise ValueError("evaluation always uses EMA weights (docs/03 section 6)")
@@ -374,6 +402,7 @@ def evaluate(
                 sampler,
                 dtype,
                 int(noise_seed_offset),
+                normalization,
             ),
         ) as pool,
         partial.open("a" if done else "w", encoding="utf-8", newline="\n") as partial_fh,

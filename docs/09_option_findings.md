@@ -169,6 +169,45 @@ clear it either: ~7 pp of the 15 was sampler choice, ~8 pp survives at the check
 sampler, and the band effect that is left is 60.0 % against 68.0 %. So H is the only hypothesis
 cheap enough to run before D, and its target is a paired ~8-10 pp gap on 1100-1149 at DDPM@100.
 
+**Measured and declined (2026-10-30).** Three results, none of them needing the episode arm:
+
+- **`just processor-equiv` passed at 1e-6** (`results/processor_equiv.json`): the checkpoint's eight
+  buffers and `lerobot`'s processor pipelines agree on 20 real frames -- weights 0.0, images
+  2.4e-07 (one fp32 ulp), state 0.0, actions 0.0, history ordering 0.0. The mapping is not the
+  defect, so the pre-registered rule stops H here.
+- **The paired control is null at the checkpoint's sampler** (`results/lerobot_control/rows.jsonl`,
+  200 rows): 126/200 for the control against our DDPM@100 118/200 -- 78 both, 40 / 48 discordant,
+  exact McNemar **p = 0.46**. Only DDIM@10 against that control separates (104 vs 126, p = 0.03),
+  and that comparison *is* the sampler. Five repeats of that loop (r2-r5 plus the original row
+  file) score 126, 128, 125, 123 and 127 -- **62.9 % ± 1.0 pp** -- so the gap is +3.9 pp with a
+  [-5.5, +13.0] pp episodes-and-runs bootstrap that spans zero. The 134/200 scored earlier came
+  from the other entry point (`just lerobot-control`, aggregate only) and is one unrepeated run,
+  not a sample of this loop's spread (`docs/04` §4).
+- **`just env-equiv` shows the env wrapper is identical** (coverage and success traces agree to
+  0.0, same termination step, identical first frame), so no part of any loop-to-loop gap is the
+  environment.
+
+Net: the ~4 pp that survived option A is inside the combined noise of the noise stream, the
+control's own repeats (sd 1.0 pp) and 200-episode resolution. No located defect; H is closed as an
+explanation and kept only as a tested seam.
+
+**The design, for the record (2026-10-30).** `docs/10_processor_adoption.md` carries the
+amendment, an audit of the decision and the adoption design; the code exists default-off
+(`models/normalization.py`, `normalization="processors"`) and **nothing has been measured with
+it**. The audit moved two numbers rather than the direction:
+
+- The like-for-like residual is **~4 pp, not 15** — our DDPM@100 (118/200) against the control's
+  five-run mean (125.8/200, 62.9 % ± 1.0 pp) at the same sampler on the same seeds. The 15 pp
+  figure compares our DDIM@10 against a DDPM@100 control and so charges the sampler's share to
+  the adapter; the 8 pp this audit was first written with came from the control's single 134/200
+  run, which sits ~4 sd outside its own repeated band.
+- A 200-seed A/B cannot resolve even 4 pp (the DDPM arm's 7 pp came with 88 discordant pairs and
+  p = 0.17), so the episode arm was re-sized to 600 seeds -- which is still short of what 4 pp
+  would need, one more reason the deterministic probe is the decision rule and the arm never ran.
+  Coverage being flat (0.884-0.895)
+  across arms from 45.5 % to 69.0 % lowers H's prior: an arithmetic error usually moves coverage
+  too. Step 0 is therefore a refutation test, and passing it is the expected outcome.
+
 ## Decision (staff-engineer read of the above)
 
 Take **C + F + B + A** -- all four are done in this batch -- and take **H next**, with the pairing
@@ -189,8 +228,14 @@ F + A produced "7 pp sampler, ~8 pp residual, on this band, at this bar". $0 of 
 high-risk options: D, E and G would each have cost days and none of them would have touched the
 gap, because all three change what is being measured rather than where the difference comes from.
 
-**One measurement is still owed, and it is the first step of H, not a new option:** `just
-lerobot-control-rows` at 200 episodes. Until it runs, "the reference reproduces" is a Fisher test on
-aggregate counts (134 vs 138); afterwards it is paired by seed like every other comparison here, and
-H's before/after is measurable on the same episodes. It is a ~2 h job on an idle GPU and should be
-run once, alone, with no other block competing for the device.
+**The owed measurement is now in, and it moved the conclusion rather than settling it.**
+`just lerobot-control-rows` at 200 episodes produced 126/200 (63.0 %) for the control against our
+DDPM@100 118/200, exact McNemar p = 0.46: at the checkpoint's own sampler this repo and the
+reference are **not separated**. The control separates only from DDIM@10 (104 vs 126, p = 0.03),
+which is a statement about truncated sampling, not about the adapter. Five repeats of that loop put
+its own spread at 1.0 pp (62.9 % ± 1.0 pp), which makes the residual +3.9 pp with a
+[-5.5, +13.0] pp interval that spans zero; the 134/200 scored earlier is a single run of the
+aggregate entry point, not a draw from that band (`docs/04` §4). Combined with the probe's 2.4e-07
+and the env check's 0.0,
+the honest summary of the diffusion stage is: one measured sampler cost, no measured adapter
+defect, at 200-episode resolution.

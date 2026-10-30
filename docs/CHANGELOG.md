@@ -532,3 +532,70 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   `bench_serve` and the paced loop, and Docker is absent here), G (packaging). H is now the next
   option, not a gated one. Owed before it: the 200-episode `just lerobot-control-rows` run that
   makes the adapter-free control paired by seed instead of aggregate (134 vs 138 by Fisher).
+
+## 2026-10-30: option H -- audit, amendment, and the seam behind a default-off flag
+
+- **`docs/10_processor_adoption.md`** carries the amendment to rule 4 (four conditions, nothing
+  adopted), an audit of the H decision, the adoption design and the runbook.
+- **The audit re-sized the target and lowered the prior.** The like-for-like residual is 8 pp
+  (our DDPM@100 118/200 against the adapter-free control's 134/200), not 15; coverage is flat at
+  0.884-0.895 across arms spanning 45.5 % to 69.0 % success, which argues against an arithmetic
+  defect; and 200 seeds cannot resolve 8 pp (the DDPM arm's 7 pp had 88 discordant pairs,
+  p = 0.17), so the episode arm is 600 seeds and the deterministic probe is the decision rule.
+- **`models/normalization.py`** is the seam: `BuffersNorm` (default, unchanged arithmetic) and
+  `ProcessorsNorm` (lerobot's pipelines, opt-in), plus `flatten_history`/`restore_history`, the
+  device-step override and the `config_id` guard. `normalization="processors"` threads through
+  `load_policy`, `evaluate` and `--normalization`; the VQ-BeT adapter refuses it.
+- **`scripts/processor_equiv.py`** (`just processor-equiv`) is step 0: migrated weights against
+  the published ones, then images, state, actions, the library's own round trip and history
+  ordering, bar 1e-6, result in `results/processor_equiv.json`, non-zero exit on a difference.
+- **`scripts/paired_test.py`** (`just paired`) is the one implementation of the paired 2x2 that
+  both the control comparison and H's episode arm need, so no p-value is typed by hand.
+- Tests: `tests/unit/test_normalization_protocol.py` (8) pin the seam, the history ordering and
+  the transposed-reshape trap; 92 unit tests total. **No measurement was taken with any of it** --
+  no row in `results/` came from the processor path, and step 0 has not been run.
+
+## 2026-10-30: three probes, three nulls -- H declined, the residual is noise-sized
+
+- **`just processor-equiv` passes at 1e-6** (`results/processor_equiv.json`, 20 real frames): the
+  checkpoint's eight normalization buffers and `lerobot`'s migrated processor pipelines agree --
+  weights 0.000e+00, images 2.384e-07 (one fp32 ulp), state 0.0, actions 0.0, history ordering
+  0.0. Option H's pre-registered rule stops there: the mapping is not the defect, nothing is
+  adopted, `normalization="processors"` stays default-off and unmeasured. The seam and its 9 unit
+  tests stay because they are cheap and default-off.
+- **The paired control is null at the checkpoint's sampler.** `just lerobot-control-rows` wrote
+  200 rows (seeds 1000-1199): control 126/200 (63.0 %) against our DDPM@100 118/200 -- 78 both,
+  40 / 48 discordant, exact McNemar p = 0.46. Only DDIM@10 separates (104 vs 126, p = 0.03), which
+  is the sampler, not the adapter.
+- **The control's own reruns disagree by 4 pp.** The same command scored 134/200 earlier with
+  identical settings, so `results/lerobot_control/eval_info.json` now holds the second run (126)
+  and the first survives only in this file. That spread is the same size as the residual, which is
+  why the like-for-like null is the reading to keep.
+- **`just env-equiv` shows the env wrapper is identical** (`results/env_equiv.json`): one seed,
+  fixed 300-action sequence, coverage and success traces agree to 0.0, same termination step,
+  bit-identical first frame. R5's environment half is closed.
+- **New tooling:** `scripts/paired_test.py` + `just paired` (one implementation of the paired 2x2),
+  `scripts/env_equiv.py` + `just env-equiv`, `scripts/processor_equiv.py` + `just processor-equiv`.
+  Docs: `docs/04` §4 carries all three entries, `docs/06` records the R5/R14 outcomes, `docs/10`
+  carries the amendment and the design, `docs/09` records H as measured and declined.
+
+## 2026-10-30: the control is repeated -- spread 1.0 pp, so the residual is ~4 pp, not 8
+
+- **Four more runs of the identical control command** (`scripts/control_repeats.sh`, r2-r5, one
+  worker, ~38 min each, `results/lerobot_control/repeats/`), so the adapter-free control is now
+  five runs of the row-writing loop: 126, 128, 125, 123, 127 of 200 -- **62.9 %, sd 1.0 pp**, range
+  61.5-64.0 %, t interval over runs [61.7 %, 64.1 %].
+- **`scripts/control_spread.py` (`just control-spread`) states the null with an interval:** each
+  run, the control's own across-run interval, and the like-for-like gap resampled over episodes
+  *and* runs (`stats.paired_delta_ci`). Result: **+3.9 pp, 95 % [-5.5, +13.0] pp** -- it spans zero
+  (`results/lerobot_control/spread.json`).
+- **The "4 pp run-to-run spread" was not spread, and the 8 pp residual goes with it.** The
+  134/200 (67.0 %) run came from `just lerobot-control`, the *aggregate* entry point, in 2042 s,
+  while every row-writing run takes ~2312 s; it sits ~4 sd outside the five-run band. Reading 134
+  and 126 as one command disagreeing with itself conflated two entry points into the same loop, and
+  the ~8 pp computed against the 134 run is superseded by +3.9 pp against the repeated mean. The
+  path difference is recorded as *unexplained*: a repeat of the aggregate path is running before
+  anything is claimed about it.
+- Updated in place: `docs/04` §4 (amended paired-control entry plus a new repeats entry), `docs/09`
+  (H's measured-and-declined block and the closing read), `docs/10` §0.1/§0.2/§2/§5, `docs/STATE`,
+  the README template (and the generated README) and the model card. No code path changed.

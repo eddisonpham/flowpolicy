@@ -31,6 +31,12 @@ def main() -> None:
         help="pretrained only, and only with --sampler fast (E8)",
     )
     parser.add_argument(
+        "--normalization",
+        default="buffers",
+        choices=["buffers", "processors"],
+        help="pretrained diffusion only: whose normalization arithmetic (docs/10 option H)",
+    )
+    parser.add_argument(
         "--noise-seed-offset",
         type=int,
         default=0,
@@ -57,6 +63,7 @@ def main() -> None:
         scheduler=args.scheduler,
         dtype=args.dtype,
         noise_seed_offset=args.noise_seed_offset,
+        normalization=args.normalization,
     )
     success = np.array([r["success"] for r in rows])
     coverage = np.array([r["coverage"] for r in rows])
@@ -64,6 +71,7 @@ def main() -> None:
         "config_id": args.config_id,
         "episodes": len(rows),
         "noise_seed_offset": args.noise_seed_offset,
+        "normalization": args.normalization,
         "success_rate": float(success.mean()),
         "coverage_mean": float(coverage.mean()),
         "latency_mean_ms": float(np.mean([r["latency_mean_ms"] for r in rows])),

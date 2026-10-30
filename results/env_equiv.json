@@ -1,0 +1,22 @@
+{
+  "seed": 1000,
+  "steps": 300,
+  "ours": {
+    "coverage_final": 0.015353553808115202,
+    "done_at": 300
+  },
+  "theirs": {
+    "coverage_final": 0.015353553808115202,
+    "done_at": 300,
+    "obs_keys": [
+      "agent_pos",
+      "pixels"
+    ]
+  },
+  "coverage_max_abs_diff": 0.0,
+  "success_max_abs_diff": 0.0,
+  "image0_identical": true,
+  "state0_max_abs_diff": 0.0,
+  "same_done_at": true,
+  "verdict": "same env: coverage and success traces agree step for step"
+}

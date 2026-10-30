@@ -298,7 +298,88 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   row (30/50 = 60.0 % against 37/50) sits between the two ends, consistent with the sampler
   carrying part of it, but p = 0.14 at that sample resolves nothing. The missing cell is this
   repo's adapter at DDPM@100 on all 200 seeds; until it is run, the supported statement is that
-  the reference is reproducible and this repo's deployment path is 15 pp short of it.
+  the reference is reproducible and this repo's path is short of it by an amount not yet
+  attributed. **Superseded later the same day** by the row-level paired control (two entries
+  below): that cell was run, it does not separate from the control, and the 15 pp is a
+  cross-sampler artefact rather than an adapter shortfall.
+
+- **2026-10-30: rule 4 is amended for the processor load path (option H), on four conditions.**
+  The D11 amendment left "the normalization glue" on the list of things that stay ours. H may
+  replace it with `lerobot`'s own processor pipeline (`policy_preprocessor.json` /
+  `policy_postprocessor.json`, produced by `scripts/lerobot_migrate.py`) for the diffusion load
+  path only, under `docs/10` §1: (1) scope is that one mapping inside `models/`, with `eval/`,
+  `deploy/`, the row schema and the generators untouched; (2) the buffer path stays the default
+  and a caller opts in explicitly; (3) the adoption is one revertable commit on its own branch;
+  (4) the library's JSON is never edited -- local deviations are constructed in this repo's code.
+  **Nothing has been adopted, and no learning rate of GPU time has been spent on it.** The
+  decision rule is deterministic: `scripts/processor_equiv.py` compares the two implementations
+  on 20 real frames and 1e-6 is the bar. A pass ends the option, because a mapping that agrees to
+  round-off cannot explain a success gap. Only a difference opens the episode arm, which is sized
+  at 600 seeds, not 200: the DDPM@100 cell measured a real 7 pp at p = 0.17 on 200 paired seeds,
+  so a 200-seed A/B could not resolve the ~8 pp H is chasing. Reason for the amendment: the
+  residual after A is ~8 pp at the checkpoint's own sampler (118/200 against the control's
+  134/200, and the control runs `lerobot`'s normalization), coverage is flat across every arm
+  (0.884-0.895), and the two implementations of one declared mapping have never been compared
+  numerically. Design, audit and runbook: `docs/10`.
+- **2026-10-30: the paired control is null at the checkpoint's own sampler.**
+  `just lerobot-control-rows` re-ran the adapter-free control on seeds 1000-1199 writing one row
+  per episode (`results/lerobot_control/rows.jsonl`, 200 rows, unique seeds 1000-1199): **126/200
+  (63.0 %)** for the control against this repo's DDPM@100 118/200 (59.0 %) -- 78 both, 40 ours
+  only, 48 control only, 34 neither, exact McNemar **p = 0.46**. At the sampler the checkpoint's
+  own numbers were produced with, the two loops are **not separated**. The control separates only
+  from DDIM@10 (126 vs 104, 35 / 57 discordant, p = 0.03), and that is a statement about truncated
+  sampling, not about the adapter. **Amended later the same day by the repeats entry below:**
+  this entry read the day's 134/200 and 126/200 as one command disagreeing with itself by 4 pp.
+  They came from two different entry points into the same loop (`just lerobot-control`, which
+  writes only an aggregate, and `just lerobot-control-rows`, which writes rows), and five repeats
+  of the row writer land in 61.5-64.0 %, so the 4 pp was never that path's spread. This supersedes
+  the 2026-10-30 reading of the same control as a 15 pp shortfall: 15 pp compares DDIM@10 with a
+  DDPM@100 control.
+- **2026-10-30: the two normalization implementations are the same arithmetic (option H, null).**
+  `just processor-equiv` compared the checkpoint's eight buffers against `lerobot`'s processor
+  pipelines on 20 real frames from seeds 1000-1019 (`results/processor_equiv.json`): migrated
+  weights identical (0.000e+00), images 2.384e-07 (one fp32 ulp), state 0.0, actions 0.0, and
+  history ordering 0.0 between the batched and per-frame paths -- all inside the pre-registered
+  1e-6 bar, so `pass: true`. The mapping declared by `normalization_mapping` is not where the
+  residual lives, H is declined as an explanation, and `normalization="processors"` stays
+  default-off and unmeasured (`docs/10` §3).
+- **2026-10-30: the env wrapper is identical too, so R5's environment half is closed.**
+  `just env-equiv` stepped seed 1000 through this repo's `PushTEnv` and `lerobot`'s env stack with
+  one fixed 300-action sequence (`results/env_equiv.json`): per-step coverage and success traces
+  agree exactly (max abs diff 0.0), the termination step matches (300), the first observation is
+  bit-identical, and both report `pixels` / `agent_pos`. The environment term inside every
+  loop-to-loop comparison in this file is therefore zero. What remains open under R5 is only the
+  original PushT code path, which this repo does not run.
+- **2026-10-30: the control is not deterministic, so its spread is now measured, not assumed.**
+  Before repeating the 200-episode block, the identical `just lerobot-control-rows` command was run
+  twice on 20 seeds (1000-1019): **14/20 and then 13/20**, seven seeds flipping and ten of the
+  twenty coverage values differing, one by 0.28. Nothing here can configure that away --
+  `lerobot-eval` calls `set_seed(cfg.seed)` once, so the policy's noise stream is fixed for the run;
+  what is left is kernel-level float nondeterminism, amplified by PushT's contact dynamics over 300
+  steps near the 0.95 success line into whole-episode flips. A verdict on the ~8 pp residual
+  therefore cannot rest on a single rerun's p-value: the control is measured over K repeats of the
+  identical command (`scripts/control_repeats.sh`, `just control-repeats`) and the gap is quoted
+  with a two-stage bootstrap that resamples episodes *and* runs
+  (`policybench.eval.stats.paired_delta_ci`, `just control-spread`,
+  `results/lerobot_control/spread.json`). An episodes-only interval would be too narrow by exactly
+  the term the null depends on.
+- **2026-10-30: the control's spread is 1.0 pp, so the residual is ~4 pp, not 8.** Four repeats of
+  the identical row-writing command (`scripts/control_repeats.sh`, r2-r5, one worker, ~38 min each)
+  join the original row file: 126, 128, 125, 123 and 127 of 200, i.e. **62.9 % with an sd of
+  1.0 pp** (range 61.5-64.0 %, t interval over runs [61.7 %, 64.1 %]). Against this repo's DDPM@100
+  118/200 (59.0 %) that is **+3.9 pp**, and resampling episodes and runs together
+  (`stats.paired_delta_ci`) gives **[-5.5, +13.0] pp** at 95 % -- a null that spans zero, now stated
+  with an interval instead of two anecdotes (`results/lerobot_control/spread.json`).
+  The repeats also retire the 4 pp "run-to-run spread" that the entry above recorded: the
+  134/200 (67.0 %) run came from `just lerobot-control`, the *aggregate* entry point
+  (`lerobot-eval` directly, 2042 s), not from the row writer (2312 s), and it sits ~4 sd outside
+  the five-run band. It is therefore one observation of a path that has never been repeated
+  against itself, not a draw from the row writer's distribution. Why the two paths differ is not
+  established -- a 13 % wall-clock difference is the only visible trace -- so the aggregate path
+  is being repeated before anything is claimed about it. Consequence for the quoted numbers: the
+  ~8 pp residual computed against the single 134/200 run is superseded, because the control's own
+  repeated centre is 62.9 % against that run's 67.0 %. What survives is a ~4 pp residual this
+  design does not resolve at 200 episodes, still not attributed to the adapter.
 
 ## 5. Acceptance criteria
 - [x] Harness test: eval/train seed overlap raises an error (`tests/unit/test_eval_seeds.py`, asserted in `rollout.evaluate`).

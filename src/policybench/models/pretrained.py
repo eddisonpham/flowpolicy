@@ -21,14 +21,40 @@ zero, so docs/04 keeps the published 65.4 % as the acceptance gate for this file
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import torch
 from torch import Tensor, nn
 
 from policybench.models.fast_sampler import DDIMCoefficients, ddim_coefficients, ddim_sample
+from policybench.models.normalization import (
+    BuffersNorm,
+    Normalization,
+    denormalize_action,
+    load_processor_norm,
+    normalize_image,
+    normalize_state,
+)
 
 DEFAULT_HF_ID = "lerobot/diffusion_pusht"
+# Built by `just lerobot-control`; the only artifact on this host that carries the checkpoint's
+# processor files (docs/10).
+DEFAULT_PROCESSOR_DIR = Path("checkpoints/diffusion_pusht_migrated")
+
+# The normalization transforms are re-exported rather than defined here: `normalization.py` owns
+# the mapping so that the two implementations of it can be compared (`scripts/processor_equiv.py`).
+__all__ = [
+    "DEFAULT_HF_ID",
+    "DEFAULT_PROCESSOR_DIR",
+    "PretrainedDiffusionPolicy",
+    "denormalize_action",
+    "import_backend",
+    "load_normalization",
+    "normalize_image",
+    "normalize_state",
+    "resolve_dtype",
+]
 
 # E8 (docs/04 section 2): the checkpoint is fp32, so mixed precision is a *choice* with a
 # correctness risk, not a free win. Names are accepted in both spellings so a runner flag
@@ -70,21 +96,6 @@ def import_backend() -> tuple[Any, Any]:
     return DiffusionPolicy, DDIMScheduler
 
 
-def normalize_image(image: Tensor, mean: Tensor, std: Tensor) -> Tensor:
-    """VISUAL = MEAN_STD: uint8-derived [0, 1] image to zero-mean unit-variance."""
-    return (image - mean) / std
-
-
-def normalize_state(state: Tensor, low: Tensor, high: Tensor) -> Tensor:
-    """STATE = MIN_MAX: raw pixels to [-1, 1] with the dataset's own extremes."""
-    return 2.0 * (state - low) / (high - low) - 1.0
-
-
-def denormalize_action(action: Tensor, low: Tensor, high: Tensor) -> Tensor:
-    """ACTION = MIN_MAX: [-1, 1] back to pixels, the inverse of `normalize_state`."""
-    return (action + 1.0) * 0.5 * (high - low) + low
-
-
 def load_normalization(hf_id: str = DEFAULT_HF_ID) -> dict[str, Tensor]:
     """Read the checkpoint's normalization buffers (see the module docstring)."""
     from huggingface_hub import hf_hub_download
@@ -117,6 +128,15 @@ class PretrainedDiffusionPolicy(nn.Module):
     only sane choice when `steps` < num_train_timesteps) or "ddpm" (the checkpoint's own
     scheduler, stochastic at every step, which is what the published 65.4 % used).
 
+    `normalization` picks *whose arithmetic* maps raw units to network units (docs/10):
+
+    - "buffers" (default): the eight tensors inside `model.safetensors`, applied by this repo.
+      Every row in `results/` was measured this way.
+    - "processors": `lerobot`'s `policy_preprocessor.json` / `policy_postprocessor.json`, i.e.
+      the library's own implementation of the same declared mapping. Needs the migrated
+      checkpoint directory, and is only worth using if `scripts/processor_equiv.py` shows the
+      two disagree.
+
     `sampler` picks *whose* denoising loop runs for DDIM:
 
     - "stock": lerobot -> diffusers `DDIMScheduler.step` per step. The reference path, and
@@ -137,6 +157,8 @@ class PretrainedDiffusionPolicy(nn.Module):
         sampler: str = "stock",
         dtype: str = "float32",
         pretrained_step: int = 175_000,
+        normalization: str = "buffers",
+        processor_dir: str | Path | None = None,
     ) -> None:
         super().__init__()
         DiffusionPolicy, DDIMScheduler = import_backend()
@@ -179,6 +201,26 @@ class PretrainedDiffusionPolicy(nn.Module):
         self.register_buffer("state_high", stats["state_high"].float())
         self.register_buffer("action_low", stats["action_low"].float())
         self.register_buffer("action_high", stats["action_high"].float())
+
+        # The one object `predict_chunk` talks to for units. Both implementations satisfy the
+        # same protocol, so the sampler below cannot tell which is in use (docs/10 section 4.1).
+        self.normalization = normalization
+        self._norm: Normalization
+        if normalization == "buffers":
+            self._norm = BuffersNorm(
+                image_mean=self.image_mean,
+                image_std=self.image_std,
+                state_low=self.state_low,
+                state_high=self.state_high,
+                action_low=self.action_low,
+                action_high=self.action_high,
+            )
+        elif normalization == "processors":
+            self._norm = load_processor_norm(processor_dir or DEFAULT_PROCESSOR_DIR, device=device)
+        else:
+            raise ValueError(
+                f"unknown normalization {normalization!r}; choose 'buffers' or 'processors'"
+            )
 
         # `self.to` rather than `self.policy.to`: the normalization buffers are this
         # module's, and they have to travel with the network. Device only -- the
@@ -295,8 +337,8 @@ class PretrainedDiffusionPolicy(nn.Module):
     ) -> Tensor:
         if steps < 1:
             raise ValueError("steps must be >= 1")
-        image = normalize_image(obs["image"].float(), self.image_mean, self.image_std)
-        state = normalize_state(obs["state"].float(), self.state_low, self.state_high)
+        image = self._norm.image(obs["image"].float())
+        state = self._norm.state(obs["state"].float())
         if self.sampler == "fast":
             actions = self._fast_chunk(image, state, int(steps), noise)
         else:
@@ -304,7 +346,7 @@ class PretrainedDiffusionPolicy(nn.Module):
             actions = self.policy.predict_action_chunk(
                 {"observation.image": image, "observation.state": state}, noise=noise
             )
-        chunk = denormalize_action(actions, self.action_low, self.action_high)
+        chunk = self._norm.actions(actions)
         return chunk.clamp_(0.0, 512.0)
 
     def num_parameters(self) -> int:

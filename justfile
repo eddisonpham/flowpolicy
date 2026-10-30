@@ -52,6 +52,11 @@ test-local:
 doctor:
     uv run python scripts/doctor.py
 
+# Paired McNemar between any two results files, on the seeds both cover. One implementation of
+# the test, so no number is computed by hand (docs/04 section 1).
+paired a b="results/e0_published_seeds_ddpm.jsonl" label_a="a" label_b="b":
+    uv run python scripts/paired_test.py --a {{a}} --b {{b}} --label-a {{label_a}} --label-b {{label_b}}
+
 # One-screen summary of everything measured so far, from results/*.jsonl.
 report:
     uv run python scripts/report.py
@@ -151,6 +156,39 @@ lerobot-control episodes="200" seed="1000" batch="8":
 # `lerobot-control` builds. Run under the isolated lerobot interpreter, not the project's.
 lerobot-control-rows episodes="200" seed="1000" batch="8":
     .venv-lerobot/Scripts/python.exe scripts/lerobot_control_rows.py --episodes {{episodes}} --seed {{seed}} --batch {{batch}}
+
+# How much does the adapter-free control move between runs? Reads the repeats written by
+# `lerobot-control-rows` and states the like-for-like gap with an interval that includes them.
+# Measured 2026-10-30: five runs span 61.5-64.0 % (sd 1.0 pp), so the repeats are part of the
+# measurement, not a re-check (docs/04 section 4).
+control-spread:
+    uv run python scripts/control_spread.py
+
+# Four repeats (r2-r5) of the identical control command, 200 episodes each (~38 min per run), on
+# top of the original row file. Rerun only to extend the block: the reader above takes whatever
+# files are on disk.
+control-repeats from="2":
+    bash scripts/control_repeats.sh {{from}}
+
+# Option H step 0 (docs/10 section 3): do the checkpoint's eight buffers and lerobot's
+# processor pipelines compute the same arithmetic? Deterministic, no sampler, no episodes, no
+# GPU block; exits non-zero if they differ by more than 1e-6. Run it with the isolated lerobot
+# interpreter, because only that env has `lerobot`.
+processor-equiv checkpoint="checkpoints/diffusion_pusht_migrated":
+    .venv-lerobot/Scripts/python.exe scripts/processor_equiv.py --checkpoint {{checkpoint}}
+
+# Option H's episode arm (docs/10 section 5): the library's normalization in the measured path.
+# 600 seeds, because 200 cannot resolve the ~8 pp the adoption is chasing; both arms are ours, so
+# this needs no reference block. "proc" in the config_id is required by rollout.evaluate.
+eval-dp-processors episodes="600" seed_start="1000":
+    uv run python scripts/prune_results.py --path results/e0_processors.jsonl --prefix dp_proc
+    uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_proc_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 10 --normalization processors --workers 1 --out results/e0_processors.jsonl
+
+# Do this repo's env wrapper and lerobot's produce the same coverage trace? R5 has been open
+# since 2026-10-19, and the adapter-free control runs inside lerobot's env stack, so an env
+# difference would sit inside every loop-to-loop comparison. Fixed action sequence, no policy.
+env-equiv seed="1000" steps="300":
+    .venv-lerobot/Scripts/python.exe scripts/env_equiv.py --seed {{seed}} --steps {{steps}}
 
 # Render one episode to an annotated GIF (packaging, not a measurement).
 demo steps="4" seed="10000":
