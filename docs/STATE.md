@@ -6,8 +6,44 @@
 | Current step id | none (evals complete: E0, E3, E3-replication, E8, E9, E10, E12, E14, serving load, paced loop; rename to `policybench` complete) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
 | Last completed step | rename `flowpolicy` -> `policybench` (2026-10-28), after M9.7 |
-| Evidence | `just verify` green (2026-10-30: ruff, ruff format, mypy strict on 28 files, 74 CPU unit tests, 1 smoke test, generated tables/README byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
+| Evidence | `just verify` green (2026-10-30: ruff, ruff format, mypy strict on 29 files, 84 CPU unit tests, 1 smoke test, generated tables/README byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
+
+## What changed on 2026-10-30 (options pass: three taken, three declined, one gated)
+
+`docs/08` was a menu; this pass worked it in order of risk, one commit per option on branch
+`exp/options`, and `docs/09_option_findings.md` records the cost and outcome of each. Taken: F
+(multiplicity note), B (paired control rows), C (crash-bounded and resumable blocks, which is
+where the real bug was). Declined: D (second task), E (ROS 2 path -- its measurable half already
+exists in `bench_serve`/paced loop, and Docker is absent on this host), G (packaging). Gated: H
+(adopt lerobot's processors), behind A's pre-registered reading.
+
+- **C found a defect, not an ergonomics gap.** Shards were one contiguous chunk per worker and
+  only a finished chunk flushed, so a single-worker block held every row in memory: A's first
+  launch sat at zero rows in `.partial` for 25 minutes, and a 3 h block would have lost all of it
+  to a closed laptop. Seeds are now cut into `workers * 8` interleaved chunks, rows flush per
+  chunk, a re-run of the same `config_id` skips seeds already in `.partial`, and the append is
+  sorted. Verified with a realistic partial: `resuming probe_n8b: 3/8`, five episodes run, 8 rows,
+  8 unique seeds, partial removed.
+- **B makes the adapter-free control pairable.** `policybench/eval/lerobot_rows.py` (pure, 5 tests)
+  plus `scripts/lerobot_control_rows.py` wrap `eval_policy` and write this repo's rows, so the
+  control stops being an aggregate comparison across different samples. Verified at 4 episodes:
+  3/4 success, 3 rows censored at 0.95, `2 both, 1 ours only, 1 control only, p = 1.00`. The
+  200-episode run is deliberately not repeated yet -- do it once, after A, so both arms are paired.
+- **F cost one paragraph and immediately mattered.** `docs/04` §1 now states the six quoted tests,
+  the uncorrected alpha and the Bonferroni arithmetic, plus the rule for blocks that grew. The
+  per-block analysis below is the first post-hoc split the note has to cover.
+- **A (running) is no longer the same question.** The committed 50-seed DDPM@100 arm is 30/50
+  against the checkpoint's 37/50 (p = 0.14) and against our DDIM@10 32/50 (p = 0.83), but those
+  seeds are the block where our DDIM is *already* not separated from the checkpoint (p = 0.40), so
+  that arm had no gap to explain. Splitting the 200-seed block locates it: 1000-1049 32 vs 37
+  (p = 0.40), 1050-1099 25 vs 33 (p = 0.13), **1100-1149 18 vs 34 (p < 0.001)**, 1150-1199 29 vs 34
+  (p = 0.40), with coverage lowest on the same block (0.857 against 0.894-0.917). Post-hoc and
+  labelled as such; A must therefore be read per block. Pre-registered reading: DDPM@100 separated
+  from DDIM@10 on 1100-1149 means truncation is the cause; not separated means H (adapter) is next.
+- Costs measured on the way: DDPM@100 is 4.0 s per chunk and ~154 s per episode at two workers
+  (2.3x per chunk for 2x the work, i.e. slower than one worker), so the recipe now defaults to one
+  worker and the 200-seed block is ~3 h.
 
 ## What changed on 2026-10-30 (stage close: one computed verdict, idempotent runs)
 

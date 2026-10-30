@@ -500,3 +500,25 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   own 2024 `eval_info.json`, which carried one row per episode -- so the control can be compared
   to this repo in aggregate only, not per seed. The episode videos under
   `results/lerobot_control/videos/` are run artifacts and are not part of the result.
+
+## 2026-10-30: next-stage options pass (three taken, three declined, one gated)
+
+- **`docs/09_option_findings.md`** records the risk-ordered pass over `docs/08`: cost, outcome and
+  verdict per option, one commit each on `exp/options`.
+- **C found a defect.** `rollout.evaluate` sharded one contiguous chunk per worker and flushed only
+  at chunk end, so a single-worker block flushed nothing until its last episode (observed live: an
+  empty `.partial` for 25 minutes of a 3 h run). Seeds are now `workers * 8` interleaved chunks,
+  rows flush per chunk, a re-run of the same `config_id` resumes from `.partial`, and the append is
+  sorted. Tests: `tests/unit/test_eval_resume.py`.
+- **B makes the adapter-free control pairable.** `policybench/eval/lerobot_rows.py` +
+  `scripts/lerobot_control_rows.py` (and `just lerobot-control-rows`) wrap lerobot's `eval_policy`
+  to capture the per-episode records it currently discards, in this repo's schema. Verified at 4
+  episodes; the 200-episode control run waits until A lands so both arms are paired together.
+- **F answers multiplicity while it is cheap.** `docs/04` §1 names the six quoted tests, the
+  uncorrected alpha, the Bonferroni bar and the rule for blocks that grew after a first look.
+- **A's 50-seed arm is not evidence about the sampler.** 30/50 at DDPM@100 vs 32/50 at DDIM@10 on
+  the same seeds (p = 0.83), but those seeds are the block where our DDIM is already not separated
+  from the checkpoint (p = 0.40). The 200-seed gap is concentrated in seeds 1100-1149 (18/50 vs
+  34/50, p < 0.001; post-hoc, labelled). The 200-seed DDPM@100 block now runs one worker (~3 h).
+- Declined with reasons in `docs/09`: D (second task), E (ROS 2 -- its measurable half is already
+  `bench_serve` and the paced loop, and Docker is absent here), G (packaging). H is gated on A.
