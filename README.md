@@ -119,7 +119,7 @@ A rendered episode with the loop's own timings on the frame is in
 
 | Question | Measured answer | Source |
 |---|---|---|
-| Does the harness reproduce the published policy? | Yes: 64.0% [52.0%, 78.0%] success and 0.924 [0.878, 0.953] mean coverage over 50 episodes at DDIM N=10, against the model card's 65.4 % success and 0.907 mean coverage (its 0.955 column is `max_reward`, i.e. coverage / 0.95) | E0 |
+| Does the harness reproduce the published policy? | not shown to reproduce, on the checkpoint's own seeds: this repo 104/200 (52.0%) against the checkpoint's own block 138/200 (69.0%) over seeds 1000-1199, 106 episodes agreeing and exact McNemar p < 0.001. Mean coverage 0.895 against 0.915, which is only a lower bound -- gym-pusht clips reward at 1.0, so every success records exactly 0.95 (the card's 0.955 column is `max_reward`, i.e. coverage / 0.95) | E0 |
 | How few sampler steps still work? | 0.121 at N=1; 0.716 at N=2; 0.885 at N=4; 0.919 at N=8; 0.888 at N=10; 0.892 at N=16. The ladder is flat after N=4 (coverage intervals overlap there); chunk latency keeps growing linearly in N, in the table below | E3 |
 | What does one chunk cost at batch 1? | 73.5 ms eager / 66.8 ms graph at N=4; 190.5 ms eager / 181.0 ms graph at N=10. CUDA graphs are worth 1.05x here, against 4.7x on the 11 M ablation model. `torch.compile` runs on this repo's DDIM sampler (overhead mode): 65.6 ms at N=4 against 73.5 ms for the stock loop, i.e. 1.12x -- so compile and graphs are worth a tenth, not the 4.7x/5.8x they were worth on the 11 M ablation model: at 262.7 M parameters the network, not the launcher, is the cost | E9 |
 | Does half precision buy a control period? | No. The best half-precision configuration (bfloat16, cudagraph) cuts a chunk to 55.6 ms at N=4 from 73.4 ms in fp32 (1.32x) and to 136.7 ms at N=10 from 194.4 ms (1.42x), which is still over a 100 ms period: the deployable envelope stays N <= 4. On paired episodes bfloat16 50% [35%, 65%], float16 45% [30%, 60%], float32 35% [22%, 50%] -- overlapping, so no gross regression rather than equality | E8 |
@@ -178,6 +178,13 @@ records exactly 0.95 and its 0.915 mean is a lower bound. The one like-for-like 
 the 32 episodes both runs fail -- 0.850 here against 0.832 there. So the difference is in how
 often the pusher clears the 0.95 line: 64 episodes sit in [0.90, 0.95), where this repo crosses
 it zero times and the checkpoint 42. Recorded as open, not explained (`docs/04` section 4).
+
+The reference itself is reproducible here: the same checkpoint, run through `lerobot`'s own eval
+loop in an isolated environment (`just lerobot-env && just lerobot-control`), scores 134/200
+(67.0 %) on those seeds against its block's 69.0 % (Fisher p = 0.75). So the 15-point shortfall
+is in this repo's path rather than in the checkpoint or the seeds -- but it is not yet split
+between the sampler (that control runs the checkpoint's own DDPM@100; E0 is DDIM@10) and the
+adapter. The missing cell is this harness at DDPM@100 over all 200 seeds.
 
 Reading it: the checkpoint's own 100-step DDPM sampling is over ten times slower per chunk
 than 10-step DDIM and no better here (compare the two rows), which is the first hint that this

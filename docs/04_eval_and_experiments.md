@@ -217,7 +217,9 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   `models/pretrained.py` exists to bridge. So the checkpoint's own eval path cannot regenerate
   its published block in this library generation: "their 138/200" is a pinned artifact, not a
   run this host can repeat. The `av` pin was a local experiment only -- `uv.lock` is unchanged
-  and `uv sync` restores 19.0.1.
+  and `uv sync` restores 19.0.1. *(Superseded 2026-10-30 -- both obstacles turned out to be
+  workable: rebuilt processors plus a pinned `av` in an isolated env give 134/200 (67.0 %) from
+  lerobot's own loop, p = 0.75 against that block. See the control entry below.)*
 - **2026-10-29: the remaining mechanisms were checked and excluded one at a time.** (a)
   *Normalization buffers*: all eight read from `model.safetensors` have the right shapes -- the
   means/stds are `(3,1,1)`, so the subtraction is per channel rather than over the last axis --
@@ -235,6 +237,51 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   queue before predicting, padding by repeating the first frame, which is what the rollout
   deque does at reset. With (a)-(e) excluded, plus DDPM@100 at p = 0.14, nothing remains in
   the adapter or the loop to point at: the gap stays unexplained and is reported that way.
+
+- **2026-10-30: the diffusion gap is not the noise stream this repo draws.** `just eval-dp-noise`
+  re-ran the same 200 published seeds (1000-1199) with the same sampler and only the per-episode
+  policy noise seed shifted (`--noise-seed-offset 500000`,
+  `results/e0_published_seeds_noise2.jsonl`): 91/200 (45.5 %) against 104/200 (52.0 %) on the
+  original stream, exact McNemar p = 0.21 (Fisher p = 0.23), coverage 0.884 against 0.895. The
+  two blocks share every environment seed and differ only in which Gaussian the sampler starts
+  from. They agree on 109/200 episodes (54.5 %), so the initial noise does decide individual
+  episodes -- it is the loosest joint in the pipeline -- but it does not move the rate, and it
+  certainly does not move it toward 69 %: against the checkpoint's block the second stream is
+  23 vs 70 discordant, p < 0.001. Any explanation of the gap has to survive both streams.
+  `rollout.evaluate(noise_seed_offset=...)` defaults to 0, so every earlier row is unchanged.
+- **2026-10-30: the adapter-free control runs, after two migrations.** `lerobot-eval` cannot run
+  on this host as shipped, for a reason the earlier attempt only half found: the checkpoint ships
+  no processor files (its normalization lived inside `model.safetensors`), which is what
+  `models/pretrained.py` exists to bridge. lerobot's own fix is
+  `lerobot.processor.migrate_policy_normalization`; it rebuilds `policy_preprocessor.json` and
+  `policy_postprocessor.json` correctly, then dies in its model save inside draccus' encoder
+  (`Exception: Couldn't encode 84`, raised on this checkpoint's `crop_shape: [84, 84]`) leaving a
+  0-byte `config.json` and no weights. `scripts/lerobot_migrate.py` runs lerobot's migration,
+  finishes those two writes unchanged (the same weights minus the eight normalization keys, and
+  the config minus `normalization_mapping`), and verifies the directory loads through
+  `DiffusionPolicy.from_pretrained` -- 262.7 M parameters, `n_action_steps=8`, `horizon=16`.
+  `scripts/lerobot_control.sh` then runs `lerobot-eval` on the migrated copy in an isolated
+  `.venv-lerobot` (lerobot 0.6.1, av 15.1.0, torch 2.14.1+cu130), on seeds 1000-1199, with
+  `use_async_envs=false` because the async vector env asks for a `forkserver` context that does
+  not exist on Windows. `lerobot-eval` seeds episode *i* with `--seed + i`, so `--seed=1000` is
+  the same 200 episodes this repo scores 52 % on. The migrated copy runs the checkpoint's own
+  DDPM@100, i.e. the configuration its 65.4 % block was measured with.
+- **2026-10-30: the control reproduces the checkpoint (67.0 % against 69.0 %), so the shortfall
+  is in this repo's path.** `just lerobot-control` scored 134/200 (67.0 %) on seeds 1000-1199
+  with mean coverage 0.885 (censored: `max_reward * 0.95`) in 2042 s of eval time
+  (`results/lerobot_control/eval_info.json`). Against the checkpoint's own block on the same
+  seeds -- 138/200, 69.0 % -- Fisher exact p = 0.75: **their published number is reproducible on
+  this host**, which corrects the 2026-10-29 reading of the same block as a pinned artifact of
+  another library generation. Against this repo's 104/200 (52.0 %) on the same episodes, Fisher
+  p = 0.003: a 15 pp shortfall with the same weights, the same seeds and the same 96x96
+  observations (checked: lerobot's `PushtEnv` declares 384 but gym-pusht renders 96, exactly as
+  here).
+  What this does *not* yet say is which stage is short. The control runs the checkpoint's own
+  DDPM@100 while E0's 52 % is DDIM@10, so the 15 pp is split, not assigned. The 50-seed DDPM@100
+  row (30/50 = 60.0 % against 37/50) sits between the two ends, consistent with the sampler
+  carrying part of it, but p = 0.14 at that sample resolves nothing. The missing cell is this
+  repo's adapter at DDPM@100 on all 200 seeds; until it is run, the supported statement is that
+  the reference is reproducible and this repo's deployment path is 15 pp short of it.
 
 ## 5. Acceptance criteria
 - [x] Harness test: eval/train seed overlap raises an error (`tests/unit/test_eval_seeds.py`, asserted in `rollout.evaluate`).

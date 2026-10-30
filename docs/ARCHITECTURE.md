@@ -75,7 +75,8 @@ lateness. Three chunk strategies share one path (naive, temporal ensemble, cross
 contract (`GET /health`, `POST /chunk`), raw pixels in and out.
 
 **Evidence → publication.** `eval/report.py` holds the result-file registry and the computed
-headline answers; `scripts/make_tables.py` renders tables, `make_figures.py` plots,
+headline answers (a verdict is computed from the strongest comparison available -- the same-episode
+block when it exists -- never from the unpaired one), `eval/stats.py` holds the exact tests, `scripts/make_tables.py` renders tables, `make_figures.py` plots,
 `make_readme.py` splices them into the README. CI regenerates all three and fails on any diff.
 
 **Training (subordinate).** Dataclasses + Hydra, Zarr window sampler, ResNet-18/GroupNorm

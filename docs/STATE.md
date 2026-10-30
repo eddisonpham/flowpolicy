@@ -9,6 +9,40 @@
 | Evidence | `just test` green (2026-10-29: ruff, ruff format, mypy strict on 27 files, 61 CPU unit tests, 1 smoke test); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
+## What changed on 2026-10-30 (stage close: one computed verdict, idempotent runs)
+
+A cleanup pass, no new measurements. Every item either removes a way for the repository to
+contradict itself or makes a multi-hour run survive a crash.
+
+- **The README's reproduction verdict was wrong, and the generator was the cause.** The
+  headline row read "Yes: 64.0 %" because `eval/report.py` computed it from the unpaired
+  50-episode E0 block, while `docs/00` had recorded the criterion as PARTIAL since 2026-10-29
+  and the paired 200-seed block says p < 0.001. `headline_rows` now takes the paired block
+  (`results/e0_published_seeds.jsonl`) and the checkpoint's own block
+  (`results/diffusion_published.jsonl`) and renders the computed verdict; the unpaired branch
+  says "unpaired only" and names the command that would pair it. Guarded by two new tests.
+- **One implementation of each test.** McNemar and Fisher exact moved from
+  `scripts/make_tables.py` into `policybench/eval/stats.py`, so `mypy --strict` covers them and
+  the table generator and the README cannot word the same p-value differently. The script
+  imports them under their old names, so the existing table tests are unchanged.
+- **A crashed eval block cannot be mistaken for a complete one.** `rollout.evaluate` flushes
+  rows to `<out>.partial` per shard and appends to `<out>` only after every shard finishes, so
+  a 2.5 h block loses at most one shard and a partial block is never read as a result.
+  `results/*.partial` is ignored.
+- **Re-running a recipe no longer doubles its rows.** The recipes that append to a fixed JSONL
+  (`eval-dp-published`, `eval-dp-noise`, `eval-dp-published-ddpm`, `eval-vqbet-replication`)
+  now prune their own `config_id` prefix first, matching `eval-vqbet`. Duplicate seeds would
+  have inflated `n` in every paired test.
+- **`just verify`** runs the CI commands plus the artifact diff (`tables`, `readme`) in one
+  command, so the pre-commit question is answered locally, not by waiting for CI.
+- **The control's setup is testable without the control.** `scripts/lerobot_migrate.py` exposes
+  `strip_normalization` and `tests/unit/test_lerobot_migrate.py` pins which keys survive (the
+  weights) and which the processors take over (the eight buffers).
+- **Committed the rows the docs cite:** `results/e0_published_seeds_noise2.jsonl` and
+  `results/lerobot_control/eval_info.json`; `justfile`, `lerobot_control.sh` and `docs/00`,
+  `docs/04`, `docs/CHANGELOG.md` carry the same story. `docs/08_next_stage_options.md` records
+  the next stage as options with costs and risks.
+
 ## What changed on 2026-10-28 (E15: a second policy family, and the architecture page)
 
 **The generality claim is now measured, not asserted.** `lerobot/vqbet_pusht` (behaviour
@@ -47,7 +81,9 @@ Both half-fixes were then measured properly on 2026-10-29:
   and its "not distinguished" reading was wrong**: the first 50 seeds reproduce exactly (32/50),
   and the gap sits where coverage lands just under the success threshold -- 64 episodes sit in
   [0.90, 0.95), where this repo succeeds 0 times and the checkpoint 42. So neither success nor
-  coverage is shown to reproduce; no root cause is established.
+  coverage is shown to reproduce; no root cause is established. A second pass on 2026-10-30
+  that shifts only the policy noise seed (same 200 seeds, same sampler) gives 91/200 (45.5 %),
+  so the rate is a property of the policy, not of the Gaussian it happened to draw.
 - **VQ-BeT replication, disjoint 200-seed block** (`results/vqbet_replication.jsonl`, seeds
   100200-100399): 108/200 (54.0 %) against 108/200 (54.0 %) on the first block, two-sided
   Fisher exact p = 1.00; coverage 0.777 against 0.818. The success rate repeats on episodes the
@@ -233,6 +269,11 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   policy parallelism is not a throughput win. Sampler equivalence: action chunks within 0.02 px
   of the library's, but only 9/20 paired episodes agree on success (chaotic task, 20-episode
   resolution), reported rather than hidden.
+- **Adapter-free control (2026-10-30)**: `scripts/lerobot_control.sh` runs the same checkpoint
+  through `lerobot`'s own eval loop in an isolated `.venv-lerobot`, on seeds 1000-1199:
+  134/200 (67.0 %) against the block's 138/200 (69.0 %), Fisher p = 0.75. The reference
+  reproduces on this host; this repo's 104/200 (52.0 %) is the shortfall. Aggregate only --
+  that lerobot version writes no per-episode rows.
 - **Infrastructure added 2026-10-27 (no training involved)**: `policybench.eval.report` (computed
   headline summary, used by `just report` and the README), `policybench.deploy.server` +
   `scripts/serve.py` (`just serve`, stdlib-only HTTP serving boundary, contract in docs/05
@@ -259,15 +300,28 @@ cannot see a policy degrade when it is not succeeding. The owner asked for the 1
   `uv sync --frozen` then `pytest -m "unit and not gpu"` -> 57 passed.
 - One checkpoint exists for PushT, so E0/E3/E9/E10 intervals are episode-level and there is
   no seed-to-seed variance to report. Stated on every table that has pretrained rows.
-- **The diffusion reference block cannot be regenerated on this stack (2026-10-29).** Running
-  the checkpoint's own `lerobot-eval` here fails twice: `av` 19.0.1 has no `av.option` (the
-  library caps `av<16`), and with `av` 15.1.0 the run raises `ProcessorMigrationError` because
-  the 2024 checkpoint ships no `policy_preprocessor.json`. So "their 138/200" is a pinned
-  artifact of a different library generation, not a number this host can re-derive. The
-  adapter and loop were audited instead and every mechanism was excluded -- normalization
-  buffers, the 84x84 crop, action slicing, observation rendering, observation history and
-  truncated sampling (DDPM@100 p = 0.14) -- so the 200-seed gap is still unexplained and is
-  written up as unexplained (`docs/04` section 4, 2026-10-29).
+- **Resolved 2026-10-30: the diffusion reference block can be regenerated on this host.** The
+  2026-10-29 entry said it could not; both blockers are cleared, in an isolated environment.
+  `av` 15.1.0 lives in `.venv-lerobot` (built by `scripts/build_lerobot_env.sh`, so the project
+  env keeps its own `av`), and the missing `policy_preprocessor.json` is produced by
+  `scripts/lerobot_migrate.py`, which runs lerobot's own `migrate_policy_normalization` and then
+  finishes the model save that crashes inside draccus (`Couldn't encode 84`, on this
+  checkpoint's `crop_shape: [84, 84]`). `just lerobot-control` runs `lerobot-eval` on the
+  migrated copy for seeds 1000-1199, with `use_async_envs=false` because Windows has no
+  `forkserver` context. It returned 134/200 (67.0 %) against that block's 138/200 (69.0 %),
+  Fisher p = 0.75: **the reference reproduces on this host.** Nothing in the project's locked
+  environment changed. What remains is this repo's own 15 pp shortfall on the same episodes
+  (104/200, Fisher p = 0.003), attributed to the path but not yet split between sampler (the
+  control runs DDPM@100, E0's 52 % is DDIM@10) and adapter; `docs/04` section 4 names the
+  missing 200-seed DDPM@100 cell.
+- **The success gap is not the noise stream this repo draws (2026-10-30).** Same 200 seeds, same
+  sampler, only the per-episode policy noise seed shifted: 91/200 (45.5 %) against 104/200
+  (52.0 %), exact McNemar p = 0.21, coverage 0.884 against 0.895, and only 109/200 episodes
+  agree. The noise decides individual episodes -- it is the loosest joint in the pipeline -- but
+  it does not move the rate, and 69 % sits outside both blocks. With normalization buffers, the
+  84x84 crop, action slicing, observation rendering, observation history, truncated sampling
+  (DDPM@100 p = 0.14) and now the noise stream excluded, the 200-seed gap stays unexplained and
+  is reported that way (`docs/04` section 4).
 - `lerobot` lives outside `uv.lock` (it caps torch < 2.12) and `just setup` prunes it;
   `diffusers` is locked in `dev`, so the unit gate no longer depends on the backend. The
   lerobot half is still documented rather than solved.

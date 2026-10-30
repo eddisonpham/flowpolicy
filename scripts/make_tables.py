@@ -7,12 +7,17 @@ from-scratch ablation lives in results/ablation/. Missing files are skipped.
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 from typing import Any
 
 from policybench.eval.metrics import bootstrap_ci, group_rows
 from policybench.eval.report import headline_table
+from policybench.eval.stats import fisher_exact, mcnemar_exact, p_text
+
+# Older names, kept because the tests pin the statistics through this module and because the
+# table code below reads better with short ones. The implementations live in the package.
+_fisher_exact = fisher_exact
+_mcnemar_exact = mcnemar_exact
 
 ROOT = Path("results")
 ABLATION = ROOT / "ablation"
@@ -346,35 +351,6 @@ def serve_table(rows: list[dict[str, Any]]) -> str:
 PUBLISHED_SUCCESS = {"diffusion": 0.654, "vqbet": 0.570}
 
 
-def _fisher_exact(a: int, b: int, c: int, d: int) -> float:
-    """Two-sided Fisher exact p for the 2x2 table [[a, b], [c, d]].
-
-    The paired tests use McNemar because both runs see the same episodes. A replication block
-    sees *different* episodes, so the samples are independent and the right test is this one.
-    """
-    n = a + b + c + d
-    row1, col1 = a + b, a + c
-    if row1 == 0 or col1 == 0 or n == 0:
-        return 1.0
-
-    def prob(x: int) -> float:
-        return math.comb(row1, x) * math.comb(n - row1, col1 - x) / math.comb(n, col1)
-
-    observed = prob(a)
-    lo = max(0, col1 - (n - row1))
-    hi = min(row1, col1)
-    return min(1.0, sum(prob(x) for x in range(lo, hi + 1) if prob(x) <= observed + 1e-12))
-
-
-def _mcnemar_exact(ours_only: int, theirs_only: int) -> float:
-    """Two-sided exact McNemar p-value over the discordant pairs."""
-    n = ours_only + theirs_only
-    if n == 0:
-        return 1.0
-    tail = sum(math.comb(n, i) for i in range(min(ours_only, theirs_only) + 1)) / 2**n
-    return min(1.0, 2 * tail)
-
-
 def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, family: str) -> str:
     """Same-seed comparison against a checkpoint's own eval block (docs/04 section 3).
 
@@ -397,8 +373,7 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, 
         1 for row in shared if not row["success"] and theirs[int(row["eval_seed"])]["success"]
     )
     p = _mcnemar_exact(ours_only, theirs_only)
-    # Printing "p = 0.00" reads as a rounding bug; below 1e-3 say so.
-    p_text = "p < 0.001" if p < 0.001 else f"p = {p:.2f}"
+    p_str = p_text(p)
     o_cov = sum(float(row["coverage"]) for row in shared) / n
     t_cov = sum(float(theirs[int(row["eval_seed"])]["coverage"]) for row in shared) / n
     pub_ok = sum(int(row["success"]) for row in published)
@@ -416,7 +391,7 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, 
         f"checkpoint's own block): this repo {o_ok}/{n} "
         f"({o_ok / n:.1%}) against the checkpoint's own block {t_ok}/{n} ({t_ok / n:.1%}); "
         f"{n - ours_only - theirs_only} episodes agree, {ours_only} succeed only here and "
-        f"{theirs_only} only there, exact McNemar {p_text}, so {verdict}. Mean coverage "
+        f"{theirs_only} only there, exact McNemar {p_str}, so {verdict}. Mean coverage "
         f"{o_cov:.3f} here; their block reports {t_cov:.3f}, which is only a lower bound -- "
         f"gym-pusht clips reward at 1.0, so every success records exactly 0.95 whatever its "
         f"true coverage. Their published block is {pub_ok}/{len(published)} = "
@@ -609,6 +584,9 @@ def main() -> None:
     headline = headline_table(
         {
             "e0": read(ROOT / "e0.jsonl"),
+            # The verdict comes from the paired block, not from the unpaired E0 rows.
+            "e0_published": read(ROOT / "e0_published_seeds.jsonl"),
+            "diffusion_published": read(ROOT / "diffusion_published.jsonl"),
             "e3": read(ROOT / "e3.jsonl"),
             "e9": read(ROOT / "latency.jsonl"),
             "e10": read(ROOT / "deploy.jsonl"),

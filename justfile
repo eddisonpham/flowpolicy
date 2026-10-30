@@ -31,6 +31,14 @@ types:
 test: lint types
     uv run pytest -m "unit and not gpu"
 
+# The same commands CI runs, plus the artifacts it diffs: one command that proves the tree is
+# self-consistent before a commit. `test` stays separate because it is what docs/01 promises.
+verify: test
+    uv run pytest -m "smoke" -q
+    uv run python scripts/make_tables.py
+    uv run python scripts/make_readme.py
+    git diff --exit-code -- results/tables README.md
+
 # CI smoke job (docs/01 section 4): 20 steps of real training on CPU, plus resume
 # equivalence at rtol=1e-5. No GPU, no dataset, no network.
 smoke:
@@ -100,6 +108,7 @@ eval-vqbet episodes="200" seed_start="100000":
 # Disjoint replication block for the VQ-BeT rows: seeds 100200-100399 are outside the block
 # above, so this tests whether 54 % repeats on fresh episodes rather than resampling it.
 eval-vqbet-replication episodes="200" seed_start="100200":
+    uv run python scripts/prune_results.py --path results/vqbet_replication.jsonl --prefix vqbet_pusht_rep
     uv run python scripts/evaluate.py --ckpt hf:lerobot/vqbet_pusht --config-id vqbet_pusht_rep{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 1 --action-horizon 5 --workers 1 --out results/vqbet_replication.jsonl
 
 # Pin both checkpoints' own per-episode eval blocks (500 seeds each) for the paired tests.
@@ -110,12 +119,30 @@ published-blocks:
 # E0 paired check: the diffusion checkpoint on the *published* block's own seeds, because
 # E0's 10000-block is not inside it and an aggregate comparison cannot be paired.
 eval-dp-published episodes="200" seed_start="1000":
+    uv run python scripts/prune_results.py --path results/e0_published_seeds.jsonl --prefix dp_published_n
     uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 10 --out results/e0_published_seeds.jsonl
+
+# Is the diffusion gap a property of the policy or of the noise we drew? Same 200 published
+# seeds, same sampler, same everything -- only the per-episode policy noise seed is shifted.
+# A rate that stays near 52 % means the noise stream is not the explanation.
+eval-dp-noise episodes="200" seed_start="1000" offset="500000":
+    uv run python scripts/prune_results.py --path results/e0_published_seeds_noise2.jsonl --prefix dp_published_noise
+    uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_noise{{offset}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 10 --noise-seed-offset {{offset}} --out results/e0_published_seeds_noise2.jsonl
 
 # The same comparison the other way: the checkpoint's own DDPM@100 on the published seeds, to
 # test whether the success gap is truncated sampling rather than the harness.
 eval-dp-published-ddpm episodes="50" seed_start="1000":
+    uv run python scripts/prune_results.py --path results/e0_published_seeds_ddpm.jsonl --prefix dp_published_ddpm100_n
     uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_published_ddpm100_n{{episodes}} --scheduler ddpm --steps 100 --episodes {{episodes}} --seed-start {{seed_start}} --workers 2 --out results/e0_published_seeds_ddpm.jsonl
+
+# Adapter-free control (docs/04 section 4): the checkpoint through lerobot's *own* eval loop on
+# the same seed block, with none of this repo's code in the path. Own venv, because lerobot
+# caps torch<2.12 and av<16 against this project's pins.
+lerobot-env:
+    bash scripts/build_lerobot_env.sh
+
+lerobot-control episodes="200" seed="1000" batch="8":
+    EPISODES={{episodes}} SEED={{seed}} BATCH={{batch}} bash scripts/lerobot_control.sh
 
 # Render one episode to an annotated GIF (packaging, not a measurement).
 demo steps="4" seed="10000":

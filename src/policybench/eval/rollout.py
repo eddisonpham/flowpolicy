@@ -148,14 +148,22 @@ def rollout_episode(
     device: str = "cuda",
     max_steps: int = MAX_STEPS,
     record_latency: bool = True,
+    noise_seed_offset: int = 0,
 ) -> dict[str, float]:
     # Seed the policy's stochastic sampler per episode. Without this the flow
     # sampler draws from whatever global RNG state the worker happens to hold,
     # so the same eval seed gave different rollouts on different runs and the
     # number of episodes per worker silently changed the result.
-    torch.manual_seed(env_seed)
+    #
+    # `noise_seed_offset` shifts that seed without touching the environment seed,
+    # which is what makes "is the success rate a property of the policy or of the
+    # noise stream we drew" a measurable question: env episodes stay identical,
+    # only the sampler's initial noise changes. Offset 0 is the historical
+    # behaviour, so every earlier row keeps its exact number.
+    noise_seed = int(env_seed) + int(noise_seed_offset)
+    torch.manual_seed(noise_seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(env_seed)
+        torch.cuda.manual_seed_all(noise_seed)
     obs_horizon = policy.obs_horizon
     env = PushTEnv()
     wall_start = time.perf_counter()
@@ -218,28 +226,64 @@ def _init_worker(
     scheduler: str,
     sampler: str,
     dtype: str,
+    noise_seed_offset: int,
 ) -> None:
     torch.set_num_threads(1)
     policy, meta = load_policy(
         checkpoint, device=device, scheduler=scheduler, sampler=sampler, dtype=dtype
     )
     _WORKER.update(
-        policy=policy, meta=meta, device=device, steps=sampler_steps, horizon=action_horizon
+        policy=policy,
+        meta=meta,
+        device=device,
+        steps=sampler_steps,
+        horizon=action_horizon,
+        noise_offset=noise_seed_offset,
     )
 
 
 def _run_episodes(seeds: list[int]) -> list[dict[str, Any]]:
     out = []
     for seed in seeds:
+        offset = int(_WORKER["noise_offset"])
         result = rollout_episode(
             _WORKER["policy"],
             seed,
             sampler_steps=_WORKER["steps"],
             action_horizon=_WORKER["horizon"],
             device=_WORKER["device"],
+            noise_seed_offset=offset,
         )
-        out.append({"eval_seed": seed, **result, **_WORKER["meta"]})
+        out.append(
+            {
+                "eval_seed": seed,
+                "noise_seed": int(seed) + offset,
+                **result,
+                **_WORKER["meta"],
+            }
+        )
     return out
+
+
+def _stamp(
+    row: dict[str, Any],
+    *,
+    config_id: str,
+    sampler_steps: int,
+    action_horizon: int,
+    noise_seed_offset: int,
+) -> None:
+    """Attach the run's metadata to one episode row.
+
+    Applied per shard so rows can be flushed as they complete (`evaluate`), and so a row's
+    meaning never depends on the row that follows it.
+    """
+    row["config_id"] = config_id
+    row["task"] = "pusht"
+    row["sampler_steps"] = sampler_steps
+    row["action_horizon"] = action_horizon
+    row["weights"] = str(row.get("weights", "ema"))
+    row["noise_seed_offset"] = int(noise_seed_offset)
 
 
 def evaluate(
@@ -257,7 +301,19 @@ def evaluate(
     scheduler: str = "ddim",
     sampler: str = "stock",
     dtype: str = "float32",
+    noise_seed_offset: int = 0,
 ) -> list[dict[str, Any]]:
+    """Run `eval_seeds` and append one JSON line per episode to `out_path`.
+
+    `noise_seed_offset` shifts the policy's per-episode sampling seed while leaving the
+    environment seed alone, so two blocks over the same seeds differ only in the noise
+    drawn. Default 0 reproduces every pre-existing result exactly.
+
+    Rows are flushed to `<out_path>.partial` as each shard finishes and only appended to
+    `out_path` once every shard is done. A multi-hour block therefore loses nothing to a crash
+    or a sleeping laptop, and a half-finished block cannot be read as a complete one: either
+    the file is whole or it does not exist.
+    """
     assert_seed_disjoint(train_seeds, eval_seeds)
     checkpoint = str(checkpoint)
     if not use_ema:
@@ -265,23 +321,40 @@ def evaluate(
     chunks = [eval_seeds[i::workers] for i in range(workers)]
     ctx = mp.get_context("spawn")
     results: list[dict[str, Any]] = []
-    with ProcessPoolExecutor(
-        max_workers=workers,
-        mp_context=ctx,
-        initializer=_init_worker,
-        initargs=(checkpoint, device, sampler_steps, action_horizon, scheduler, sampler, dtype),
-    ) as pool:
-        for part in pool.map(_run_episodes, [c for c in chunks if c]):
-            results.extend(part)
-    for row in results:
-        row["config_id"] = config_id
-        row["task"] = "pusht"
-        row["sampler_steps"] = sampler_steps
-        row["action_horizon"] = action_horizon
-        row["weights"] = str(row.get("weights", "ema"))
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    partial = out.with_suffix(out.suffix + ".partial")
+    with (
+        ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=ctx,
+            initializer=_init_worker,
+            initargs=(
+                checkpoint,
+                device,
+                sampler_steps,
+                action_horizon,
+                scheduler,
+                sampler,
+                dtype,
+                int(noise_seed_offset),
+            ),
+        ) as pool,
+        partial.open("w", encoding="utf-8") as partial_fh,
+    ):
+        for part in pool.map(_run_episodes, [c for c in chunks if c]):
+            for row in part:
+                _stamp(
+                    row,
+                    config_id=config_id,
+                    sampler_steps=sampler_steps,
+                    action_horizon=action_horizon,
+                    noise_seed_offset=int(noise_seed_offset),
+                )
+                partial_fh.write(json.dumps(row) + "\n")
+            partial_fh.flush()
+            results.extend(part)
     with out.open("a", encoding="utf-8") as fh:
-        for row in results:
-            fh.write(json.dumps(row) + "\n")
+        fh.write(partial.read_text(encoding="utf-8"))
+    partial.unlink()
     return results

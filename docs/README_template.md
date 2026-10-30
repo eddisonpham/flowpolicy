@@ -142,6 +142,13 @@ the 32 episodes both runs fail -- 0.850 here against 0.832 there. So the differe
 often the pusher clears the 0.95 line: 64 episodes sit in [0.90, 0.95), where this repo crosses
 it zero times and the checkpoint 42. Recorded as open, not explained (`docs/04` section 4).
 
+The reference itself is reproducible here: the same checkpoint, run through `lerobot`'s own eval
+loop in an isolated environment (`just lerobot-env && just lerobot-control`), scores 134/200
+(67.0 %) on those seeds against its block's 69.0 % (Fisher p = 0.75). So the 15-point shortfall
+is in this repo's path rather than in the checkpoint or the seeds -- but it is not yet split
+between the sampler (that control runs the checkpoint's own DDPM@100; E0 is DDIM@10) and the
+adapter. The missing cell is this harness at DDPM@100 over all 200 seeds.
+
 Reading it: the checkpoint's own 100-step DDPM sampling is over ten times slower per chunk
 than 10-step DDIM and no better here (compare the two rows), which is the first hint that this
 policy's cost profile is not where a small model's is.

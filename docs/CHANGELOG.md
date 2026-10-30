@@ -435,3 +435,68 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   adapter or the loop to point at.
 - Recorded as unexplained in `docs/04` section 4 with the exclusion list, and in `docs/STATE`'s
   open items, rather than closed with a guess.
+
+## 2026-10-30: the noise stream is out, and an adapter-free control exists
+
+- **Same seeds, different Gaussian: 45.5 % against 52.0 %.** `just eval-dp-noise` re-ran the 200
+  published seeds (1000-1199) with `--noise-seed-offset 500000`, which leaves every environment
+  seed untouched and shifts only the sampler's per-episode initial noise
+  (`results/e0_published_seeds_noise2.jsonl`). Result: 91/200 (45.5 %) against 104/200 (52.0 %),
+  exact McNemar p = 0.21, Fisher p = 0.23; coverage 0.884 against 0.895. Per-seed agreement is
+  only 109/200 (54.5 %), with 52 baseline-only and 39 offset-only successes -- so the initial
+  noise does decide individual episodes, and it is the loosest joint in the pipeline -- but it
+  does not move the rate, and 69 % lies outside both blocks (23 vs 70 discordant against the
+  checkpoint, p < 0.001). The one component of the comparison nobody had controlled is now
+  controlled, and it is not the explanation: whatever causes the gap has to survive both streams.
+- **`rollout.evaluate(noise_seed_offset=...)`** defaults to 0, so every earlier row keeps its
+  exact number. Rows now carry `noise_seed` and `noise_seed_offset`, so two blocks over the same
+  seeds cannot be mistaken for a resample of one another.
+- **The adapter-free control now runs.** The earlier attempt recorded two blockers and stopped
+  there; both are now cleared, and neither by changing what is measured. The checkpoint ships no
+  processor files, so `scripts/lerobot_migrate.py` runs lerobot's own
+  `migrate_policy_normalization` and finishes the model save it cannot complete (draccus fails to
+  encode this checkpoint's `crop_shape: [84, 84]`, leaving a 0-byte `config.json`). The migrated
+  directory loads through `DiffusionPolicy.from_pretrained` at 262.7 M parameters with the
+  published `n_action_steps=8` / `horizon=16`. `scripts/lerobot_control.sh` (and `just
+  lerobot-control`) then runs `lerobot-eval` in an isolated `.venv-lerobot` -- lerobot 0.6.1,
+  av 15.1.0, torch 2.14.1+cu130, built by `scripts/build_lerobot_env.sh` -- on seeds 1000-1199,
+  with `use_async_envs=false` because the async vector env asks for a `forkserver` context that
+  does not exist on Windows. The project's own environment is never touched by any of it.
+- **The control reproduces the checkpoint: 67.0 % against 69.0 %.** `just lerobot-control` on
+  seeds 1000-1199 gives 134/200 (67.0 %), mean coverage 0.885, 2042 s. Against the checkpoint's
+  block on the same seeds (138/200, 69.0 %) Fisher exact p = 0.75, so their published number is
+  reproducible on this host; the 2026-10-29 entry that called it "a pinned artifact of a
+  different library generation" is superseded by this run. Against this repo's 104/200 (52.0 %)
+  on the same episodes, Fisher p = 0.003. **The 15 pp shortfall is therefore in this repo's path,
+  not in the reference and not in the seeds** -- but it is not yet assigned to a stage: the
+  control runs the checkpoint's own DDPM@100 while E0's 52 % is DDIM@10, and the existing
+  50-seed DDPM@100 row (30/50 against 37/50, p = 0.14) is too small to split them. The decisive
+  cell is this repo's adapter at DDPM@100 over all 200 seeds, and it is not run yet.
+## 2026-10-30 (later): the stage closes with one source per verdict
+
+- **The README's reproduction row was wrong, and the generator caused it.** It read "Yes:
+  64.0 %" because `eval/report.py` computed the verdict from the unpaired 50-episode E0 block;
+  `docs/00` had said PARTIAL since 2026-10-29 and the paired 200-seed block says p < 0.001.
+  `headline_rows` now takes both the paired block and the checkpoint's own block and renders
+  the computed verdict, and the unpaired branch says "unpaired only" plus the command that
+  would pair it. This is the same class of bug the tables-fresh CI job exists to prevent: a
+  claim regenerated from the weakest row.
+- **McNemar and Fisher exact moved to `policybench/eval/stats.py`**, so `mypy --strict` covers
+  them and the table generator and the README compute a p-value once. `scripts/make_tables.py`
+  imports them under the old names; its tests are unchanged.
+- **`rollout.evaluate` flushes to `<out>.partial` per shard** and appends only when every shard
+  finishes, so a crashed multi-hour block loses one shard and a partial block can never be read
+  as a complete one. `results/*.partial` is ignored.
+- **The append-style recipes prune their own rows first** (`eval-dp-published`, `eval-dp-noise`,
+  `eval-dp-published-ddpm`, `eval-vqbet-replication`). Without that, a re-run duplicated seeds
+  and silently inflated `n` in the paired tests.
+- **`just verify`** = the CI commands plus the generated-artifact diff, so a commit can be
+  checked without waiting for CI. **`tests/unit/test_lerobot_migrate.py`** pins the migration's
+  key filter. `docs/08_next_stage_options.md` records the next stage as options with tradeoffs.
+- **Files:** `results/e0_published_seeds_noise2.jsonl` and
+  `results/lerobot_control/eval_info.json` are now committed (they are cited above).
+  `results/lerobot_control/eval_info.json` is the control's record. This lerobot
+  version writes only aggregates (`per_task`, `per_group`, `overall`) -- unlike the checkpoint's
+  own 2024 `eval_info.json`, which carried one row per episode -- so the control can be compared
+  to this repo in aggregate only, not per seed. The episode videos under
+  `results/lerobot_control/videos/` are run artifacts and are not part of the result.

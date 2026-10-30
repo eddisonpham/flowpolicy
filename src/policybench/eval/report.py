@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from policybench.eval.metrics import bootstrap_ci, group_rows
+from policybench.eval.stats import mcnemar_exact, p_text
 
 Row = dict[str, Any]
 
@@ -23,6 +24,8 @@ Row = dict[str, Any]
 # from-scratch policies that the pretrained checkpoint replaced (docs/04 section 4).
 RESULT_FILES: dict[str, Path] = {
     "e0": Path("results/e0.jsonl"),
+    "e0_published": Path("results/e0_published_seeds.jsonl"),
+    "diffusion_published": Path("results/diffusion_published.jsonl"),
     "e3": Path("results/e3.jsonl"),
     "e9": Path("results/latency.jsonl"),
     "e10": Path("results/deploy.jsonl"),
@@ -62,30 +65,72 @@ def _mean(rows: Iterable[Row], key: str) -> float:
     return sum(values) / len(values)
 
 
+def _reproduction_row(
+    e0: Sequence[Row], ours: Sequence[Row], published: Sequence[Row]
+) -> tuple[str, str, str]:
+    """The reproduction verdict, computed from the strongest comparison available.
+
+    The 50-episode E0 block sits on seeds 10000-10049, which are *not* inside the checkpoint's
+    own eval block, so it can only be compared to the model card's aggregate -- and it reads as
+    a pass. The paired block (`e0_published`, seeds 1000-1199) sees the checkpoint's own
+    episodes and distinguishes the two runs. The verdict therefore comes from the paired block
+    whenever it exists: an unpaired 50-episode row is not evidence of reproduction, and the
+    README headline asserted one for a week while `docs/00` already recorded PARTIAL.
+    """
+    question = "Does the harness reproduce the published policy?"
+    theirs = {int(row["eval_seed"]): row for row in published}
+    shared = [row for row in ours if int(row["eval_seed"]) in theirs]
+
+    if shared:
+        n = len(shared)
+        ours_ok = sum(1 for row in shared if row["success"])
+        theirs_ok = sum(1 for row in shared if theirs[int(row["eval_seed"])]["success"])
+        ours_only = sum(
+            1 for row in shared if row["success"] and not theirs[int(row["eval_seed"])]["success"]
+        )
+        theirs_only = sum(
+            1 for row in shared if not row["success"] and theirs[int(row["eval_seed"])]["success"]
+        )
+        p = mcnemar_exact(ours_only, theirs_only)
+        first = min(int(row["eval_seed"]) for row in shared)
+        last = max(int(row["eval_seed"]) for row in shared)
+        ours_cov = _mean(shared, "coverage")
+        theirs_cov = _mean([theirs[int(row["eval_seed"])] for row in shared], "coverage")
+        verdict = "not shown to reproduce" if p < 0.05 else "not distinguished from the checkpoint"
+        answer = (
+            f"{verdict}, on the checkpoint's own seeds: this repo {ours_ok}/{n} "
+            f"({ours_ok / n:.1%}) against the checkpoint's own block {theirs_ok}/{n} "
+            f"({theirs_ok / n:.1%}) over seeds {first}-{last}, {n - ours_only - theirs_only} "
+            f"episodes agreeing and exact McNemar {p_text(p)}. Mean coverage {ours_cov:.3f} "
+            f"against {theirs_cov:.3f}, which is only a lower bound -- gym-pusht clips reward "
+            f"at 1.0, so every success records exactly 0.95 (the card's 0.955 column is "
+            f"`max_reward`, i.e. coverage / 0.95)"
+        )
+        return question, answer, "E0"
+
+    if e0:
+        point, lo, hi = bootstrap_ci(e0)
+        return (
+            question,
+            f"unpaired only ({_fmt_ci(point, lo, hi)} success and {_coverage(e0)} mean coverage "
+            f"over {len(e0)} episodes at DDIM N=10, against the model card's 65.4 % success and "
+            f"0.907 mean coverage; its 0.955 column is `max_reward`, i.e. coverage / 0.95); the "
+            f"same-seed test needs `just eval-dp-published`",
+            "E0",
+        )
+    return question, "not measured yet (`just eval-e0`, about 50 min)", "E0"
+
+
 def headline_rows(results: Mapping[str, list[Row]]) -> list[tuple[str, str, str]]:
     """The questions a reader arrives with, as (question, answer, source)."""
     out: list[tuple[str, str, str]] = []
 
     e0 = [r for r in results.get("e0", []) if r.get("scheduler") == "ddim"]
-    if e0:
-        point, lo, hi = bootstrap_ci(e0)
-        out.append(
-            (
-                "Does the harness reproduce the published policy?",
-                f"Yes: {_fmt_ci(point, lo, hi)} success and {_coverage(e0)} mean coverage over "
-                f"{len(e0)} episodes at DDIM N=10, against the model card's 65.4 % success and "
-                f"0.907 mean coverage (its 0.955 column is `max_reward`, i.e. coverage / 0.95)",
-                "E0",
-            )
+    out.append(
+        _reproduction_row(
+            e0, results.get("e0_published", []), results.get("diffusion_published", [])
         )
-    else:
-        out.append(
-            (
-                "Does the harness reproduce the published policy?",
-                "not measured yet (`just eval-e0`, about 50 min)",
-                "E0",
-            )
-        )
+    )
 
     e3 = group_rows(results.get("e3", []), ["sampler_steps"])
     if e3:

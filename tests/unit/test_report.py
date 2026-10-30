@@ -71,6 +71,32 @@ def test_e0_answer_uses_only_the_ddim_row() -> None:
     assert "0.955 column is `max_reward`" in answer
 
 
+def test_e0_answer_is_computed_from_the_paired_block_when_it_exists() -> None:
+    """The README verdict must come from the same-episode comparison, not the 50-episode row.
+
+    On 2026-10-29 the headline still read "Yes: 64.0 %" because it was computed from the
+    unpaired E0 block, while `docs/00` already recorded the criterion as PARTIAL and the
+    paired block says p < 0.001. The generator has to render the decisive result.
+    """
+    e0 = [_row(eval_seed=10000 + i) for i in range(50)]
+    ours = [_row(eval_seed=1000 + i, success=float(i < 104)) for i in range(200)]
+    theirs = [
+        {"eval_seed": 1000 + i, "success": int(i < 138), "coverage": 0.93} for i in range(200)
+    ]
+    answer = answer_for({"e0": e0, "e0_published": ours, "diffusion_published": theirs}, "E0")
+    assert "104/200" in answer and "138/200" in answer
+    assert "exact McNemar p < 0.001" in answer
+    assert "not shown to reproduce" in answer
+    assert "PARTIAL" not in answer  # the verdict is computed, not copied from docs/00
+    assert not answer.startswith("Yes")
+
+
+def test_e0_answer_refuses_to_call_an_unpaired_block_a_reproduction() -> None:
+    answer = answer_for({"e0": [_row(eval_seed=10000 + i) for i in range(50)]}, "E0")
+    assert answer.startswith("unpaired only")
+    assert "just eval-dp-published" in answer
+
+
 def test_e3_lists_every_step_count() -> None:
     rows = {
         "e3": [
@@ -259,6 +285,7 @@ def test_e8_reports_the_speedup_and_that_it_does_not_fit_the_period() -> None:
 
 def test_inventory_names_every_file_it_looked_for() -> None:
     lines = inventory({})
-    assert len(lines) == 12
+    assert len(lines) == 14
     assert any("results/ablation/e1.jsonl" in line.replace("\\", "/") for line in lines)
+    assert any("results/e0_published_seeds.jsonl" in line.replace("\\", "/") for line in lines)
     assert all("0 rows" in line for line in lines)

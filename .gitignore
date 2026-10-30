@@ -22,6 +22,11 @@ dist/
 # --- Envs (uv.lock and .python-version stay tracked) ---
 .venv/
 venv/
+# The isolated env for the adapter-free control (`just lerobot-control`); derived, not source.
+.venv-lerobot/
+# Migrated checkpoint + rendered control videos: rebuilt by scripts/lerobot_migrate.py.
+checkpoints/diffusion_pusht_migrated/
+results/lerobot_control/videos/
 
 # --- Tool caches / coverage ---
 .pytest_cache/
@@ -42,6 +47,8 @@ htmlcov/
 
 # --- Large / generated artifacts (anchored to repo root) ---
 results/*.tmp
+# In-flight rows from a crashed eval block (`rollout.evaluate` flushes here, appends on finish).
+results/*.partial
 # Run logs from long eval jobs: reproducible from the recipe, not a result.
 results/logs/
 /data/

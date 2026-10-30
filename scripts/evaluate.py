@@ -30,6 +30,12 @@ def main() -> None:
         choices=["float32", "fp32", "bfloat16", "bf16", "float16", "fp16"],
         help="pretrained only, and only with --sampler fast (E8)",
     )
+    parser.add_argument(
+        "--noise-seed-offset",
+        type=int,
+        default=0,
+        help="shift the policy's per-episode noise seed, leaving the env seed unchanged",
+    )
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--out", type=Path, default=Path("results/eval.jsonl"))
@@ -50,12 +56,14 @@ def main() -> None:
         device=args.device,
         scheduler=args.scheduler,
         dtype=args.dtype,
+        noise_seed_offset=args.noise_seed_offset,
     )
     success = np.array([r["success"] for r in rows])
     coverage = np.array([r["coverage"] for r in rows])
     summary = {
         "config_id": args.config_id,
         "episodes": len(rows),
+        "noise_seed_offset": args.noise_seed_offset,
         "success_rate": float(success.mean()),
         "coverage_mean": float(coverage.mean()),
         "latency_mean_ms": float(np.mean([r["latency_mean_ms"] for r in rows])),
