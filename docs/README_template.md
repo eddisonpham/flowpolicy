@@ -299,9 +299,10 @@ Reading it: the harness reproduces the second checkpoint's published band (54 % 
 57 %) and prices it at a fifth of the diffusion policy's cost per control step, without any
 code knowing which family it was holding. Both checkpoints ship a per-episode eval block, so
 both comparisons are paired rather than hand-waved, and the bullets under the table are those
-tests, each on 200 shared seeds. VQ-BeT is not distinguished from its own block (108/200
-against 113/200, p = 0.68), and it repeats exactly on a disjoint block of 200 fresh seeds
-(108/200 again, Fisher p = 1.00). Diffusion gives the opposite answer at 200 seeds: 104/200
+tests. VQ-BeT is not distinguished from its own block even at the checkpoint's whole 500-episode
+block (274/500 against 285/500, p = 0.52 -- a null worth 8.6 pp, the smallest difference 500
+paired episodes can see), and it repeats on a disjoint block of 200 fresh seeds (54.0 % both
+times, Fisher p = 1.00). Diffusion gives the opposite answer at 200 seeds: 104/200
 against the checkpoint's 138/200, p < 0.001. Fifty seeds had said "not distinguished"; that
 was a power problem, not a result. Coverage is the column that separates them (0.895 against
 0.915) and also the likely link: 64 episodes land in [0.90, 0.95), where this repo crosses the

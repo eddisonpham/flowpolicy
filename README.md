@@ -396,12 +396,12 @@ the diffusion adapter does) and a dispatch on the checkpoint's own `config.json`
 The rollout harness, the latency protocol, the control loop and every generator were not
 touched.
 
-| Checkpoint | Family | Episodes | Success (95% CI) | Published | Mean coverage (95% CI) | Params M | Chunk ms (eager, batch 1) | Actions per chunk | ms per control step |
-|---|---|---|---|---|---|---|---|---|---|
-| `lerobot/diffusion_pusht` | diffusion | 50 | 64.0% [52.0%, 78.0%] | 65.4% | 0.924 [0.878, 0.953] | 262.7 | 73.5 | 8 | 9.19 |
-| `lerobot/vqbet_pusht` | vqbet | 200 | 54.0% [47.0%, 61.0%] | 57.0% | 0.818 [0.779, 0.853] | 37.5 | 9.2 | 5 | 1.83 |
+| Checkpoint | Family | Episodes | Success (95% CI) | Published | Mean coverage (95% CI) | Params M | Chunk ms (eager, batch 1) | Actions per chunk | ms per control step | Resolves pp |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `lerobot/diffusion_pusht` | diffusion | 50 | 64.0% [52.0%, 78.0%] | 65.4% | 0.924 [0.878, 0.953] | 262.7 | 73.5 | 8 | 9.19 | 13.5 |
+| `lerobot/vqbet_pusht` | vqbet | 500 | 54.8% [50.6%, 59.2%] | 57.0% | 0.798 [0.773, 0.824] | 37.5 | 9.2 | 5 | 1.83 | 8.6 |
 
-- `lerobot/diffusion_pusht`, 200 shared eval seeds (1000-1199, inside the checkpoint's own block): this repo 104/200 (52.0%) against the checkpoint's own block 138/200 (69.0%); 106 episodes agree, 30 succeed only here and 64 only there, exact McNemar p < 0.001, so the two runs are distinguished at this sample size. Mean coverage 0.895 here; their block reports 0.915, which is only a lower bound -- gym-pusht clips reward at 1.0, so every success records exactly 0.95 whatever its true coverage. Their published block is 327/500 = 65.4% over 500 episodes, and these shared seeds are a sub-block of it. Source: `results/diffusion_published.jsonl` (`scripts/published_blocks.py`).
+- `lerobot/diffusion_pusht`, 200 shared eval seeds (1000-1199, inside the checkpoint's own block): this repo 104/200 (52.0%) against the checkpoint's own block 138/200 (69.0%); 106 episodes agree, 30 succeed only here and 64 only there, exact McNemar p < 0.001, so the two runs are distinguished at this sample size. The block resolves 13.5 pp at 80 % power (`stats.resolvable_effect`), so a null here is only that coarse. Mean coverage 0.895 here; their block reports 0.915, which is only a lower bound -- gym-pusht clips reward at 1.0, so every success records exactly 0.95 whatever its true coverage. Their published block is 327/500 = 65.4% over 500 episodes, and these shared seeds are a sub-block of it. Source: `results/diffusion_published.jsonl` (`scripts/published_blocks.py`).
 
 Where the diffusion gap sits (episodes binned by the coverage this repo reached; success counted on both sides for the same seeds):
 
@@ -414,17 +414,18 @@ Where the diffusion gap sits (episodes binned by the coverage this repo reached;
 | 0.95-1.00 | 104 | 104 | 74 | 0.962 | 0.840 |
 
 
-- `lerobot/vqbet_pusht`, 200 shared eval seeds (100000-100199, inside the checkpoint's own block): this repo 108/200 (54.0%) against the checkpoint's own block 113/200 (56.5%); 107 episodes agree, 44 succeed only here and 49 only there, exact McNemar p = 0.68, so the two runs are not distinguished at this sample size. Mean coverage 0.818 here; their block reports 0.780, which is only a lower bound -- gym-pusht clips reward at 1.0, so every success records exactly 0.95 whatever its true coverage. Their published block is 285/500 = 57.0% over 500 episodes, and these shared seeds are a sub-block of it. Source: `results/vqbet_published.jsonl` (`scripts/published_blocks.py`).
+- `lerobot/vqbet_pusht`, 500 shared eval seeds (100000-100499, inside the checkpoint's own block): this repo 274/500 (54.8%) against the checkpoint's own block 285/500 (57.0%); 261 episodes agree, 114 succeed only here and 125 only there, exact McNemar p = 0.52, so the two runs are not distinguished at this sample size, and the block can only exclude differences above 8.6 pp. The block resolves 8.6 pp at 80 % power (`stats.resolvable_effect`), so a null here is only that coarse. Mean coverage 0.798 here; their block reports 0.776, which is only a lower bound -- gym-pusht clips reward at 1.0, so every success records exactly 0.95 whatever its true coverage. Their published block is 285/500 = 57.0% over 500 episodes, and these shared seeds are a sub-block of it. Source: `results/vqbet_published.jsonl` (`scripts/published_blocks.py`).
 
-- Replication on a disjoint block: 108/200 (54.0%) on seeds 100000-100199 against 108/200 (54.0%) on seeds 100200-100399; no episode is in both blocks, so the samples are independent (two-sided Fisher exact p = 1.00), and the two blocks are not distinguished, so the rate repeats within sampling error. Mean coverage 0.818 against 0.777. Source: `results/vqbet.jsonl` and `results/vqbet_replication.jsonl`.
+- Replication on a disjoint block: 274/500 (54.8%) on seeds 100000-100499 against 108/200 (54.0%) on seeds 100200-100399; no episode is in both blocks, so the samples are independent (two-sided Fisher exact p = 0.87), and the two blocks are not distinguished, so the rate repeats within sampling error. Mean coverage 0.798 against 0.777. Source: `results/vqbet.jsonl` and `results/vqbet_replication.jsonl`.
 
 Reading it: the harness reproduces the second checkpoint's published band (54 % against
 57 %) and prices it at a fifth of the diffusion policy's cost per control step, without any
 code knowing which family it was holding. Both checkpoints ship a per-episode eval block, so
 both comparisons are paired rather than hand-waved, and the bullets under the table are those
-tests, each on 200 shared seeds. VQ-BeT is not distinguished from its own block (108/200
-against 113/200, p = 0.68), and it repeats exactly on a disjoint block of 200 fresh seeds
-(108/200 again, Fisher p = 1.00). Diffusion gives the opposite answer at 200 seeds: 104/200
+tests. VQ-BeT is not distinguished from its own block even at the checkpoint's whole 500-episode
+block (274/500 against 285/500, p = 0.52 -- a null worth 8.6 pp, the smallest difference 500
+paired episodes can see), and it repeats on a disjoint block of 200 fresh seeds (54.0 % both
+times, Fisher p = 1.00). Diffusion gives the opposite answer at 200 seeds: 104/200
 against the checkpoint's 138/200, p < 0.001. Fifty seeds had said "not distinguished"; that
 was a power problem, not a result. Coverage is the column that separates them (0.895 against
 0.915) and also the likely link: 64 episodes land in [0.90, 0.95), where this repo crosses the

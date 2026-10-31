@@ -96,15 +96,15 @@
       "comparison": "VQ-BeT adapter vs its published block",
       "a": "results/vqbet.jsonl",
       "b": "results/vqbet_published.jsonl",
-      "n": 200,
+      "n": 500,
       "discordant": {
-        "a_only": 44,
-        "b_only": 49
+        "a_only": 114,
+        "b_only": 125
       },
-      "discordance": 0.465,
-      "delta_pp": 2.5,
-      "mcnemar_p": 0.6785320136533252,
-      "resolves_pp": 13.4,
+      "discordance": 0.478,
+      "delta_pp": 2.2,
+      "mcnemar_p": 0.5178172686986395,
+      "resolves_pp": 8.6,
       "uninformative_null": true
     }
   ],

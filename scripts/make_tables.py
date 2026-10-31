@@ -12,7 +12,7 @@ from typing import Any
 
 from policybench.eval.metrics import bootstrap_ci, group_rows
 from policybench.eval.report import headline_table
-from policybench.eval.stats import fisher_exact, mcnemar_exact, p_text
+from policybench.eval.stats import fisher_exact, mcnemar_exact, p_text, resolvable_effect
 
 # Older names, kept because the tests pin the statistics through this module and because the
 # table code below reads better with short ones. The implementations live in the package.
@@ -351,6 +351,34 @@ def serve_table(rows: list[dict[str, Any]]) -> str:
 PUBLISHED_SUCCESS = {"diffusion": 0.654, "vqbet": 0.570}
 
 
+def paired_resolution(
+    ours: list[dict[str, Any]], published: list[dict[str, Any]]
+) -> tuple[int, float, float] | None:
+    """Paired n, observed discordance, and the smallest effect that n resolves at 80 % power.
+
+    The third number is what a null has to be read against (`docs/04` section 1): every
+    200-episode block in this repo resolves ~13 pp, so a table that prints "not distinguished"
+    without it invites the reader to hear "no difference". Returns None when the two blocks share
+    no seeds, and a resolution of 0.0 when the arms agree on every episode (there is nothing for
+    the formula to resolve, and it divides by the discordance).
+    """
+    theirs = {int(row["eval_seed"]): row for row in published}
+    shared = [row for row in ours if int(row["eval_seed"]) in theirs]
+    n = len(shared)
+    if n < 2:
+        return None
+    ours_only = sum(
+        1 for row in shared if row["success"] and not theirs[int(row["eval_seed"])]["success"]
+    )
+    theirs_only = sum(
+        1 for row in shared if not row["success"] and theirs[int(row["eval_seed"])]["success"]
+    )
+    discordance = (ours_only + theirs_only) / n
+    if discordance <= 0:
+        return n, 0.0, 0.0
+    return n, discordance, resolvable_effect(n, discordance)
+
+
 def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, family: str) -> str:
     """Same-seed comparison against a checkpoint's own eval block (docs/04 section 3).
 
@@ -377,11 +405,15 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, 
     o_cov = sum(float(row["coverage"]) for row in shared) / n
     t_cov = sum(float(theirs[int(row["eval_seed"])]["coverage"]) for row in shared) / n
     pub_ok = sum(int(row["success"]) for row in published)
-    verdict = (
-        "the two runs are distinguished at this sample size"
-        if p < 0.05
-        else "the two runs are not distinguished at this sample size"
-    )
+    resolution = paired_resolution(ours, published)
+    resolves = f"{resolution[2] * 100:.1f} pp" if resolution else "-"
+    if p < 0.05:
+        verdict = "the two runs are distinguished at this sample size"
+    else:
+        verdict = (
+            "the two runs are not distinguished at this sample size, and the block can only "
+            f"exclude differences above {resolves}"
+        )
     first, last = (
         min(int(row["eval_seed"]) for row in shared),
         max(int(row["eval_seed"]) for row in shared),
@@ -391,7 +423,9 @@ def paired_note(ours: list[dict[str, Any]], published: list[dict[str, Any]], *, 
         f"checkpoint's own block): this repo {o_ok}/{n} "
         f"({o_ok / n:.1%}) against the checkpoint's own block {t_ok}/{n} ({t_ok / n:.1%}); "
         f"{n - ours_only - theirs_only} episodes agree, {ours_only} succeed only here and "
-        f"{theirs_only} only there, exact McNemar {p_str}, so {verdict}. Mean coverage "
+        f"{theirs_only} only there, exact McNemar {p_str}, so {verdict}. The block resolves "
+        f"{resolves} at 80 % power (`stats.resolvable_effect`), so a null here is only that "
+        f"coarse. Mean coverage "
         f"{o_cov:.3f} here; their block reports {t_cov:.3f}, which is only a lower bound -- "
         f"gym-pusht clips reward at 1.0, so every success records exactly 0.95 whatever its "
         f"true coverage. Their published block is {pub_ok}/{len(published)} = "
@@ -518,12 +552,20 @@ def generality_table(
     v_ms = float(vqbet_latency[0]["mean_ms"]) if vqbet_latency else float("nan")
     lines = [
         "| Checkpoint | Family | Episodes | Success (95% CI) | Published | Mean coverage (95% CI) "
-        "| Params M | Chunk ms (eager, batch 1) | Actions per chunk | ms per control step |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Params M | Chunk ms (eager, batch 1) | Actions per chunk | ms per control step "
+        "| Resolves pp |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for label, rows, family, chunk_ms, block in (
-        ("lerobot/diffusion_pusht", diffusion, "diffusion", d_ms, diffusion_published),
-        ("lerobot/vqbet_pusht", vqbet_rows, "vqbet", v_ms, vqbet_published),
+    for label, rows, family, chunk_ms, block, paired in (
+        (
+            "lerobot/diffusion_pusht",
+            diffusion,
+            "diffusion",
+            d_ms,
+            diffusion_published,
+            diffusion_paired or [],
+        ),
+        ("lerobot/vqbet_pusht", vqbet_rows, "vqbet", v_ms, vqbet_published, vqbet_rows),
     ):
         point, lo, hi = bootstrap_ci(rows)
         cov, cov_lo, cov_hi = bootstrap_ci(rows, metric="coverage")
@@ -535,10 +577,14 @@ def generality_table(
             if block
             else PUBLISHED_SUCCESS[family]
         )
+        # The resolution of this family's *paired* block, in the table rather than only in prose:
+        # an underpowered null is otherwise indistinguishable from a real equality.
+        resolution = paired_resolution(paired, block or [])
+        resolves = f"{resolution[2] * 100:.1f}" if resolution else "-"
         lines.append(
             f"| `{label}` | {family} | {len(rows)} | {fmt_ci(point, lo, hi)} "
             f"| {published_rate:.1%} | {cov:.3f} [{cov_lo:.3f}, {cov_hi:.3f}] "
-            f"| {params:.1f} | {chunk_ms:.1f} | {acts:.0f} | {chunk_ms / acts:.2f} |"
+            f"| {params:.1f} | {chunk_ms:.1f} | {acts:.0f} | {chunk_ms / acts:.2f} | {resolves} |"
         )
     for family, ours, block in (
         ("diffusion", diffusion_paired or [], diffusion_published or []),

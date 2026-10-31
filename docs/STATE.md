@@ -33,8 +33,9 @@ has one measured sampler cost and **no measured adapter defect** at 200-episode 
   of the loop span 61.5-67.0 % around a 63.5 % mean.
 - **Every 200-episode block resolves ~13 pp, so its nulls are coarse.** `just power-audit`
   (`results/power_audit.json`) puts the resolution at 13.1-13.5 pp at 80 % power. Four quoted nulls
-  observe less than that -- sampler 7 pp, noise stream 6.5 pp, like-for-like 4 pp, VQ-BeT 2.5 pp
-  -- so they cannot exclude effects up to ~13 pp (`docs/04` §1).
+  observe less than that -- sampler 7 pp, noise stream 6.5 pp, like-for-like 4 pp, VQ-BeT 2.2 pp
+  on its 500-seed block, which resolves 8.6 -- so they cannot exclude effects up to their own
+  resolution (`docs/04` §1).
 - **`just env-equiv` -> identical env** (`results/env_equiv.json`): coverage and success traces
   agree to 0.0 step for step, same termination step, bit-identical first frame. R5's environment
   half is closed; the env term in loop-to-loop comparisons is zero.
@@ -153,9 +154,10 @@ could not order the runs anyway (8 vs 13 discordant, p = 0.38).
 
 Both half-fixes were then measured properly on 2026-10-29:
 
-- **VQ-BeT, 200 shared seeds** (`results/vqbet.jsonl`, seeds 100000-100199): 108/200
-  (54.0 % [47.0 %, 61.0 %]) against the checkpoint's own 113/200 (56.5 %), 107 agreeing, 44
-  succeeding only here and 49 only there, exact McNemar p = 0.68. Mean coverage 0.818 against
+- **VQ-BeT, the checkpoint's whole block -- 500 shared seeds** (`results/vqbet.jsonl`, seeds
+  100000-100499): 274/500 (54.8 % [50.6 %, 59.2 %]) against the checkpoint's own 285/500
+  (57.0 %), 261 agreeing, 114 succeeding only here and 125 only there, exact McNemar p = 0.52.
+  Mean coverage 0.798 against
   0.780. The two runs are not distinguished.
 - **Diffusion, 200 shared seeds** (`results/e0_published_seeds.jsonl`, seeds 1000-1199, which
   are inside the checkpoint's block and the original E0 block is not): 104/200 (52.0 %

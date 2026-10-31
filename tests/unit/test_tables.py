@@ -10,7 +10,13 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from scripts.make_tables import _fisher_exact, coverage_bin_table, replication_note
+from scripts.make_tables import (
+    _fisher_exact,
+    coverage_bin_table,
+    paired_note,
+    paired_resolution,
+    replication_note,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -72,3 +78,42 @@ def test_coverage_bins_are_counted_per_bin_and_paired_by_seed() -> None:
 
 def test_coverage_bin_table_is_empty_without_a_published_block() -> None:
     assert coverage_bin_table([_row(1, True, 0.99)], []) == ""
+
+
+def test_paired_resolution_reports_the_audited_number() -> None:
+    # The VQ-BeT shape: 200 shared seeds, 44 ours-only and 49 theirs-only, i.e. 46.5 % discordance.
+    # The audit puts a block that coarse at 13.4 pp, and the table must print the same number.
+    ours = [_row(i, i < 44) for i in range(200)]
+    published = [
+        {"eval_seed": i, "success": int(44 <= i < 93), "coverage": 0.9} for i in range(200)
+    ]
+    resolution = paired_resolution(ours, published)
+    assert resolution is not None
+    n, discordance, resolves = resolution
+    assert n == 200
+    assert discordance == pytest.approx(93 / 200)
+    assert resolves == pytest.approx(0.134, abs=0.005)
+
+
+def test_paired_resolution_handles_a_block_with_nothing_to_resolve() -> None:
+    # Identical arms: no discordant episode, so the formula would divide by zero.
+    ours = [_row(i, i < 50) for i in range(100)]
+    n, discordance, resolves = paired_resolution(
+        ours, [{"eval_seed": i, "success": int(i < 50), "coverage": 0.9} for i in range(100)]
+    )
+    assert (n, discordance, resolves) == (100, 0.0, 0.0)
+
+
+def test_paired_resolution_is_none_without_shared_seeds() -> None:
+    assert paired_resolution([_row(1, True)], [{"eval_seed": 2, "success": 1}]) is None
+
+
+def test_paired_note_never_prints_a_null_without_its_resolution() -> None:
+    ours = [_row(i, i < 44) for i in range(200)]
+    published = [
+        {"eval_seed": i, "success": int(44 <= i < 93), "coverage": 0.9} for i in range(200)
+    ]
+    note = paired_note(ours, published, family="vqbet")
+    assert "not distinguished at this sample size" in note
+    assert "can only exclude differences above 13.4 pp" in note
+    assert "resolves 13.4 pp at 80 % power" in note

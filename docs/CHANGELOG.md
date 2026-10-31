@@ -619,3 +619,22 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   `results/lerobot_control/videos/` line that `**/videos/` already matched. `git check-ignore` was
   run both ways: the scratch and byproduct paths are ignored, and every tracked row and the
   tracked aggregate stay unshadowed.
+- `results/lerobot_control/plain_r2/` was deleted once its aggregate had a named copy
+  (`eval_info_plain_200.json`): the output dir was scratch, the JSON is the record.
+
+## 2026-10-30: tables carry their resolution, and VQ-BeT runs to the reference's limit
+
+- **The generated tables print a `Resolves pp` column** (`scripts/make_tables.py`: one
+  `paired_resolution` helper feeding both the column and the paired note), so a "not distinguished"
+  cell cannot be read as "no difference": the generality table shows 13.5 pp for diffusion and
+  8.6 pp for VQ-BeT beside the comparison each qualifies, and the note says the null is only that
+  coarse. Four tests pin it, including identical arms, where the formula would divide by zero.
+- **VQ-BeT re-run on the checkpoint's whole published block** (`just eval-vqbet 500 100000`, 500
+  episodes, ~6 min): 274/500 (54.8 % [50.6 %, 59.2 %]) against 285/500 (57.0 %) on the same seeds,
+  261 agreeing, 114 / 125 discordant, exact McNemar p = 0.52, mean coverage 0.798 against 0.776.
+  Resolution improves from 13.4 pp to **8.6 pp**, which is the ceiling: 500 is every episode the
+  published reference has.
+- **2.5 pp is not reachable against this checkpoint.** At 46.5 % discordance it needs 5,838 paired
+  episodes, so the only route is an adapter-free VQ-BeT reference this repo runs itself (~1.75
+  GPU-h per arm at 201 episodes per 3.6 min, measured). Not run. `docs/04` §3's E15 claim and its
+  falsifier now say that instead of asking for "a further 200-seed block".
