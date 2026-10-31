@@ -189,7 +189,9 @@ cheap enough to run before D, and its target is a paired ~8-10 pp gap on 1100-11
 
 Net: the ~4 pp that survived option A is inside the combined noise of the noise stream, the
 control's own repeats (sd 1.0 pp) and 200-episode resolution. No located defect; H is closed as an
-explanation and kept only as a tested seam.
+explanation and kept only as a tested seam. The audit makes that resolution explicit rather than
+implied: a 200-episode block here resolves ~13 pp, so this null excludes a defect of that size and
+nothing smaller (`docs/04` §1, `just power-audit`).
 
 **The design, for the record (2026-10-30).** `docs/10_processor_adoption.md` carries the
 amendment, an audit of the decision and the adoption design; the code exists default-off

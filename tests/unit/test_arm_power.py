@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from policybench.eval.stats import mcnemar_power, paired_binary_n
+from policybench.eval.stats import mcnemar_power, paired_binary_n, resolvable_effect
 
 pytestmark = pytest.mark.unit
 
@@ -54,3 +54,21 @@ def test_a_zero_effect_or_zero_discordance_is_an_error_not_a_number() -> None:
         paired_binary_n(0.0, 0.2)
     with pytest.raises(ValueError):
         paired_binary_n(0.04, 0.0)
+
+
+def test_resolvable_effect_inverts_the_size_formula() -> None:
+    # Whatever n the formula asks for, asking the inverse for that n must return the same effect.
+    for effect, psi in ((0.05, 0.20), (0.04, 0.44), (0.08, 0.10)):
+        n = paired_binary_n(effect, psi)
+        assert resolvable_effect(n, psi) == pytest.approx(effect, abs=0.004)
+
+
+def test_a_200_episode_block_resolves_about_13_points() -> None:
+    # The number the audit turns on: every null in results/ sits on a block this coarse.
+    assert resolvable_effect(200, 0.44) == pytest.approx(0.13, abs=0.02)
+    assert resolvable_effect(2200, 0.44) < 0.05
+
+
+def test_resolvable_effect_rejects_an_empty_block() -> None:
+    with pytest.raises(ValueError):
+        resolvable_effect(0, 0.2)

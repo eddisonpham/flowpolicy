@@ -1,0 +1,117 @@
+{
+  "power": 0.8,
+  "alpha": 0.05,
+  "comparisons": [
+    {
+      "comparison": "E0 adapter DDIM@10 vs the checkpoint's block",
+      "a": "results/e0_published_seeds.jsonl",
+      "b": "results/diffusion_published.jsonl",
+      "n": 200,
+      "discordant": {
+        "a_only": 30,
+        "b_only": 64
+      },
+      "discordance": 0.47,
+      "delta_pp": 17.0,
+      "mcnemar_p": 0.0005879022254125643,
+      "resolves_pp": 13.5,
+      "uninformative_null": false
+    },
+    {
+      "comparison": "E0 adapter DDPM@100 vs the checkpoint's block",
+      "a": "results/e0_published_seeds_ddpm.jsonl",
+      "b": "results/diffusion_published.jsonl",
+      "n": 200,
+      "discordant": {
+        "a_only": 34,
+        "b_only": 54
+      },
+      "discordance": 0.44,
+      "delta_pp": 10.0,
+      "mcnemar_p": 0.04221061162240416,
+      "resolves_pp": 13.1,
+      "uninformative_null": false
+    },
+    {
+      "comparison": "sampler: DDPM@100 vs DDIM@10, both ours",
+      "a": "results/e0_published_seeds_ddpm.jsonl",
+      "b": "results/e0_published_seeds.jsonl",
+      "n": 200,
+      "discordant": {
+        "a_only": 51,
+        "b_only": 37
+      },
+      "discordance": 0.44,
+      "delta_pp": -7.0,
+      "mcnemar_p": 0.1654405129339897,
+      "resolves_pp": 13.1,
+      "uninformative_null": true
+    },
+    {
+      "comparison": "noise stream: offset 500000 vs 0, same sampler",
+      "a": "results/e0_published_seeds_noise2.jsonl",
+      "b": "results/e0_published_seeds.jsonl",
+      "n": 200,
+      "discordant": {
+        "a_only": 39,
+        "b_only": 52
+      },
+      "discordance": 0.455,
+      "delta_pp": 6.5,
+      "mcnemar_p": 0.20817442238117587,
+      "resolves_pp": 13.3,
+      "uninformative_null": true
+    },
+    {
+      "comparison": "like-for-like: adapter DDPM@100 vs adapter-free control",
+      "a": "results/e0_published_seeds_ddpm.jsonl",
+      "b": "results/lerobot_control/rows.jsonl",
+      "n": 200,
+      "discordant": {
+        "a_only": 40,
+        "b_only": 48
+      },
+      "discordance": 0.44,
+      "delta_pp": 4.0,
+      "mcnemar_p": 0.45574127943791326,
+      "resolves_pp": 13.1,
+      "uninformative_null": true
+    },
+    {
+      "comparison": "adapter DDIM@10 vs adapter-free control",
+      "a": "results/e0_published_seeds.jsonl",
+      "b": "results/lerobot_control/rows.jsonl",
+      "n": 200,
+      "discordant": {
+        "a_only": 35,
+        "b_only": 57
+      },
+      "discordance": 0.46,
+      "delta_pp": 11.0,
+      "mcnemar_p": 0.02801690195894669,
+      "resolves_pp": 13.4,
+      "uninformative_null": false
+    },
+    {
+      "comparison": "VQ-BeT adapter vs its published block",
+      "a": "results/vqbet.jsonl",
+      "b": "results/vqbet_published.jsonl",
+      "n": 200,
+      "discordant": {
+        "a_only": 44,
+        "b_only": 49
+      },
+      "discordance": 0.465,
+      "delta_pp": 2.5,
+      "mcnemar_p": 0.6785320136533252,
+      "resolves_pp": 13.4,
+      "uninformative_null": true
+    }
+  ],
+  "uninformative_nulls": [
+    "sampler: DDPM@100 vs DDIM@10, both ours",
+    "noise stream: offset 500000 vs 0, same sampler",
+    "like-for-like: adapter DDPM@100 vs adapter-free control",
+    "VQ-BeT adapter vs its published block"
+  ]
+}

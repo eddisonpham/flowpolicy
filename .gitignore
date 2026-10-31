@@ -26,9 +26,12 @@ venv/
 .venv-lerobot/
 # Migrated checkpoint + rendered control videos: rebuilt by scripts/lerobot_migrate.py.
 checkpoints/diffusion_pusht_migrated/
-results/lerobot_control/videos/
 # Renders lerobot writes into each control output dir; the rows are the measurement, the mp4s are not.
+# The `**/` rule covers `results/lerobot_control/videos/` as well, so it is not listed twice.
 results/lerobot_control/**/videos/
+# lerobot drops its per-run aggregate into whatever `--output_dir` it is handed. A run the docs quote
+# gets a named copy next to the rows; the copies left inside output dirs are byproducts of a rerun.
+results/lerobot_control/*/eval_info.json
 
 # --- Tool caches / coverage ---
 .pytest_cache/
@@ -53,6 +56,9 @@ results/*.tmp
 results/*.partial
 # Run logs from long eval jobs: reproducible from the recipe, not a result.
 results/logs/
+# Scratch dirs from one-off probes (determinism checks, ad-hoc blocks): superseded once the finding is
+# written into docs/, so they are working copies rather than rows. Root-anchored on purpose.
+/tmp_*/
 /data/
 /logs/
 /runs/

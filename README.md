@@ -192,11 +192,11 @@ alone, exact McNemar p = 0.46. Nor is the residual larger than the control's own
 has now been repeated, and five runs of it score 126, 128, 125, 123 and 127 of 200 -- 62.9 % with
 a 1.0 pp standard deviation (range 61.5-64.0 %), which puts the gap at +3.9 pp and gives an interval
 that spans zero, [-5.5, +13.0] pp, when episodes and runs are resampled together
-(`just control-spread`, `results/lerobot_control/spread.json`). One earlier run of the *other*
-entry point into the same loop -- the plain `lerobot-eval` invocation, which writes only an
-aggregate -- scored 134/200 (67.0 %), and it is deliberately not pooled with those five: it sits
-about 4 sd outside the band, and that path has never been repeated against itself, so its 4 pp
-offset is recorded as unexplained rather than counted as spread. So what survives is
+(`just control-spread`, `results/lerobot_control/spread.json`). The *other* entry point into the
+same loop -- the plain `lerobot-eval` invocation, which writes only an aggregate -- scored 134/200
+(67.0 %) and, repeated, 126/200 (63.5 %). So that high run was a draw rather than a property of the
+entry point: seven runs of the loop span 61.5-67.0 % around a 63.5 % mean, and the paired analysis
+above stays on the five that wrote rows, because only those pair by seed. So what survives is
 roughly 4 points that this design cannot resolve at 200 episodes, and it is not attributed to the
 adapter: the two
 mechanisms that could have produced a real adapter loss are excluded by measurement rather than

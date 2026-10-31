@@ -20,7 +20,7 @@ big a block would be needed to test it.
 | this repo (E0) | ours | DDIM@10 | 104/200 = 52.0 % | 0.895 | `results/e0_published_seeds.jsonl` |
 | this repo, second noise stream | ours | DDIM@10, offset 500000 | 91/200 = 45.5 % | 0.884 | `results/e0_published_seeds_noise2.jsonl` |
 | this repo, checkpoint's sampler | ours | DDPM@100 | 118/200 = 59.0 % | 0.893 | `results/e0_published_seeds_ddpm.jsonl` |
-| adapter-free control, aggregate entry point | `lerobot-eval` | DDPM@100 | 134/200 = 67.0 % | 0.885 | n=1, `docs/04` §4; sits ~4 sd outside the repeated band |
+| adapter-free control, aggregate entry point, run twice | `lerobot-eval` | DDPM@100 | 134/200 = 67.0 %, then 126/200 = 63.5 % | 0.885 / 0.944 | `results/lerobot_control/eval_info_plain_200.json`, `docs/04` §4 |
 | adapter-free control, paired run | `lerobot-eval` + row writer | DDPM@100 | 126/200 = 63.0 % | 0.885 | `results/lerobot_control/rows.jsonl` |
 | adapter-free control, repeats r2-r5 | same | DDPM@100 | 128, 125, 123, 127 / 200 | -- | `results/lerobot_control/repeats/` |
 | adapter-free control, five-run mean | same | DDPM@100 | 125.8/200 = 62.9 % (sd 1.0 pp) | -- | `results/lerobot_control/spread.json` |

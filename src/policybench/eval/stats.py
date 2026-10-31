@@ -157,6 +157,42 @@ def mcnemar_power(
     return hits / trials
 
 
+def resolvable_effect(
+    n: int, discordance: float, *, alpha: float = 0.05, power: float = 0.8
+) -> float:
+    """Smallest effect an `n`-episode paired block resolves at `power`.
+
+    The inverse of `paired_binary_n`, and the number every null in `results/` has to be read
+    against: a block that cannot resolve 13 pp says almost nothing when it reports p = 0.46 on a
+    4 pp difference. Bisection rather than a closed form, because the sample-size formula is not
+    analytically invertible in the effect.
+
+    `paired_binary_n` is monotone decreasing in the effect (a larger effect needs fewer episodes),
+    so the bisection walks toward the smallest effect whose requirement still fits in `n`. Returns
+    a rate (0.13 = 13 pp), and is clamped to the two ends where every effect fits or none does.
+    """
+    if n <= 0:
+        raise ValueError("n must be positive")
+    if not 0 < discordance <= 1:
+        raise ValueError("discordance must be in (0, 1]")
+
+    lo, hi = 1e-4, math.sqrt(discordance) * 0.999
+    # n(effect) grows as the effect shrinks, so `n(lo) <= n` means the block already resolves
+    # something smaller than the grain of this bisection, and `n(hi) >= n` means it resolves
+    # nothing at all -- the two clamps, in the direction the formula actually runs.
+    if paired_binary_n(lo, discordance, alpha=alpha, power=power) <= n:
+        return lo
+    if paired_binary_n(hi, discordance, alpha=alpha, power=power) >= n:
+        return hi
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if paired_binary_n(mid, discordance, alpha=alpha, power=power) > n:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
 def p_text(p: float) -> str:
     """Render a p-value. Printing "p = 0.00" reads as a rounding bug; below 1e-3 say so."""
     return "p < 0.001" if p < 0.001 else f"p = {p:.2f}"

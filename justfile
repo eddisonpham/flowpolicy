@@ -175,6 +175,11 @@ control-repeats from="2":
 arm-power effect="0.04":
     uv run python scripts/arm_power.py --effect {{effect}}
 
+# What could each block in results/ actually resolve? A null on an effect smaller than the block's
+# resolution says almost nothing, and every 200-episode block here resolves ~13 pp (docs/04 s1).
+power-audit:
+    uv run python scripts/power_audit.py
+
 # Option H step 0 (docs/10 section 3): do the checkpoint's eight buffers and lerobot's
 # processor pipelines compute the same arithmetic? Deterministic, no sampler, no episodes, no
 # GPU block; exits non-zero if they differ by more than 1e-6. Run it with the isolated lerobot

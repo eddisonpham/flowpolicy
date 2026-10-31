@@ -7,6 +7,7 @@ PRE-REGISTRATION: commit this file before running E1 onward. Any change after th
 - **Checkpoint rule (fixed in advance):** report the LAST checkpoint, and separately the mean of the last K=5 evaluated checkpoints. Best-checkpoint numbers may be shown only if labelled "oracle, not a result".
 - **Statistics:** per-config mean over seeds with 95% bootstrap CI (resample seeds, then episodes). Pairwise policy comparisons use the same eval seeds (paired). Meaningful difference, set in advance: 5 percentage points absolute [proposed default; owner may change before E1]. Wilson intervals for single-seed success rates.
 - **Multiplicity and repeated looks (added 2026-10-30).** The README quotes six hypothesis tests: E0 paired McNemar, E15 paired McNemar, the VQ-BeT replication Fisher test, the adapter-free control Fisher test, E3's coverage ladder, and E12's three arms. Each answers a pre-registered question about its own seed block, so each is reported at alpha = 0.05 with no correction, and the README says so rather than implying a family-wise guarantee. For a reader who wants one: Bonferroni over six tests sets the bar at 0.008, and only E0's p < 0.001 clears it -- every other quoted p-value is read as "not distinguished" either way, so the correction would change no sentence in the README. Blocks that grew after a first look (E0 from 50 to 200 seeds, VQ-BeT from 50 to 200) are reported at their final size only; the earlier looks are in the CHANGELOG, are not counted as alpha spent, and no block was extended or stopped because of what its p-value was.
+- **Resolution of each block (added 2026-10-30).** A null is only as informative as the smallest effect its block could have seen, so `just power-audit` states that number for every paired comparison in `results/` (`results/power_audit.json`, `stats.resolvable_effect`, 80 % power). **Every 200-episode block in this repo resolves 13.1-13.5 pp**, because the discordance between any two of these runs is 44-47 %. Four quoted nulls observe less than that -- the sampler (7 pp), the noise stream (6.5 pp), the like-for-like control (4 pp) and VQ-BeT against its published block (2.5 pp) -- so they are "not distinguished" in the weak sense: they do not exclude effects up to ~13 pp, and no sentence here or in the README may read them as "no difference". Where an experiment had to resolve a small effect (option H's arm), the block is sized from a pilot rather than fixed (`docs/10` §5.1).
 - **Harness:** 20 worker processes, per-worker seeding from (eval_seed, episode_idx), output one JSON line per episode: `{config_id, train_seed, eval_seed, task, ckpt, success, coverage, steps, latency_mean_ms, latency_p95_ms}`. All tables and figures are generated from `results/*.jsonl` by scripts; no hand-edited numbers.
 - **Null results:** a null or negative result is reported with the same prominence as a positive one.
 ## 2. Experiment matrix
@@ -375,9 +376,12 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   134/200 (67.0 %) run came from `just lerobot-control`, the *aggregate* entry point
   (`lerobot-eval` directly, 2042 s), not from the row writer (2312 s), and it sits ~4 sd outside
   the five-run band. It is therefore one observation of a path that has never been repeated
-  against itself, not a draw from the row writer's distribution. Why the two paths differ is not
-  established -- a 13 % wall-clock difference is the only visible trace -- so the aggregate path
-  is being repeated before anything is claimed about it. Consequence for the quoted numbers: the
+  against itself, not a draw from the row writer's distribution. **The aggregate path was then
+  repeated and lands at 126/200 (63.5 %)** (`results/lerobot_control/eval_info_plain_200.json`),
+  inside the row writer's band, so the 67.0 % was one high draw rather than a property of that
+  entry point: seven runs of the loop span 61.5-67.0 % around a 63.5 % mean. The paired analysis
+  stays on the five runs that wrote rows, because only those pair by seed. Consequence for the
+  quoted numbers: the
   ~8 pp residual computed against the single 134/200 run is superseded, because the control's own
   repeated centre is 62.9 % against that run's 67.0 %. What survives is a ~4 pp residual this
   design does not resolve at 200 episodes, still not attributed to the adapter.

@@ -28,8 +28,13 @@ has one measured sampler cost and **no measured adapter defect** at 200-episode 
   row-writing command (r2-r5) join the original row file: 126, 128, 125, 123, 127 of 200 =
   **62.9 % ± 1.0 pp** (range 61.5-64.0). Against our DDPM@100 118/200 that is +3.9 pp with an
   episodes-and-runs bootstrap of **[-5.5, +13.0] pp** -- a null that spans zero
-  (`results/lerobot_control/spread.json`). The 134/200 run came from the aggregate entry point
-  (`just lerobot-control`) and is n=1, not a draw from this band.
+  (`results/lerobot_control/spread.json`). The aggregate entry point was then repeated: 134/200
+  (67.0 %) and 126/200 (63.5 %), so the high run was a draw rather than a path effect -- seven runs
+  of the loop span 61.5-67.0 % around a 63.5 % mean.
+- **Every 200-episode block resolves ~13 pp, so its nulls are coarse.** `just power-audit`
+  (`results/power_audit.json`) puts the resolution at 13.1-13.5 pp at 80 % power. Four quoted nulls
+  observe less than that -- sampler 7 pp, noise stream 6.5 pp, like-for-like 4 pp, VQ-BeT 2.5 pp
+  -- so they cannot exclude effects up to ~13 pp (`docs/04` §1).
 - **`just env-equiv` -> identical env** (`results/env_equiv.json`): coverage and success traces
   agree to 0.0 step for step, same termination step, bit-identical first frame. R5's environment
   half is closed; the env term in loop-to-loop comparisons is zero.

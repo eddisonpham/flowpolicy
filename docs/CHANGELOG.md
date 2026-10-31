@@ -599,3 +599,23 @@ Paths in entries below refer to where files lived on the date of the entry. The 
 - Updated in place: `docs/04` §4 (amended paired-control entry plus a new repeats entry), `docs/09`
   (H's measured-and-declined block and the closing read), `docs/10` §0.1/§0.2/§2/§5, `docs/STATE`,
   the README template (and the generated README) and the model card. No code path changed.
+
+## 2026-10-30: the blocks are audited, and 67.0 % turns out to be a draw
+
+- **`just power-audit`** (`scripts/power_audit.py`, `stats.resolvable_effect`, `results/power_audit.json`)
+  states the smallest effect each paired block can resolve. **Every 200-episode block in this repo
+  resolves 13.1-13.5 pp at 80 % power**, because any two of these runs disagree on 44-47 % of
+  episodes. Four quoted nulls observe less than that -- sampler 7 pp, noise stream 6.5 pp,
+  like-for-like 4 pp, VQ-BeT 2.5 pp -- so they are coarse nulls, and `docs/04` §1 now says a reader
+  may not read them as "no difference".
+- **The aggregate control entry point was repeated: 134/200 then 126/200 (63.5 %)**
+  (`results/lerobot_control/eval_info_plain_200.json`), the second inside the row writer's
+  61.5-64.0 % band. So the 67.0 % was one high draw, not a property of that entry point: seven runs
+  of the loop span 61.5-67.0 % around a 63.5 % mean, the paired analysis stays on the five runs that
+  wrote rows, and the `Why the two paths differ` question in `docs/04` closes as "they don't".
+- **Tree cleaned.** `tmp_det/` (an earlier determinism probe's working copy) and
+  `results/lerobot_control/repeats/eval_info.json` (a byproduct; r5's rows are the record) removed.
+  `.gitignore` gained `/tmp_*/` and per-output-dir `eval_info.json`, and lost the redundant
+  `results/lerobot_control/videos/` line that `**/videos/` already matched. `git check-ignore` was
+  run both ways: the scratch and byproduct paths are ignored, and every tracked row and the
+  tracked aggregate stay unshadowed.
