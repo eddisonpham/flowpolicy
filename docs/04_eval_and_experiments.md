@@ -314,9 +314,10 @@ Priority order if time shrinks: E0, E3, E9, E10, E12, E1, E2, E4, E11, E8, E5, E
   **Nothing has been adopted, and no learning rate of GPU time has been spent on it.** The
   decision rule is deterministic: `scripts/processor_equiv.py` compares the two implementations
   on 20 real frames and 1e-6 is the bar. A pass ends the option, because a mapping that agrees to
-  round-off cannot explain a success gap. Only a difference opens the episode arm, which is sized
-  at 600 seeds, not 200: the DDPM@100 cell measured a real 7 pp at p = 0.17 on 200 paired seeds,
-  so a 200-seed A/B could not resolve the ~8 pp H is chasing. Reason for the amendment: the
+  round-off cannot explain a success gap. Only a difference opens the episode arm, whose size is now
+  set by a pilot rather than fixed at 600: at the ~4 pp residual the repeats measured, paired-binary
+  power costs 243 episodes when the two arms disagree on 5 % of episodes and 2,157 when they
+  disagree on 44 %, so the observed discordance decides (`just arm-power`, `docs/10` §5.1). Reason for the amendment: the
   residual after A is ~8 pp at the checkpoint's own sampler (118/200 against the control's
   134/200, and the control runs `lerobot`'s normalization), coverage is flat across every arm
   (0.884-0.895), and the two implementations of one declared mapping have never been compared

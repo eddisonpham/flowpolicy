@@ -46,8 +46,9 @@ and this design does not resolve it.
    discordant pairs and p = 0.17. An 8 pp effect needs roughly three times the episodes to clear
    alpha, so a 200-seed A/B of this path would return "not distinguished" whether or not the truth
    was a defect -- the worst thing a pre-registration can design for. Section 5 is re-sized to 600
-   *(and the repeats below make the target ~4 pp rather than 8, which 600 is still short of; the
-   arm never ran, so the sizing is recorded rather than exercised)*
+   *(the repeats later that day make the target ~4 pp rather than 8, so §5.1 replaces the fixed 600
+   with a pilot-chosen 600-2,200; the arm never ran, so that sizing is recorded rather than
+   exercised)*
 seeds and the deterministic probe is made the primary rule.
 3. **The control draws a different noise stream from ours.** `lerobot-eval` batches 8 episodes and
 draws DDPM noise per batch; we seed torch per episode. Same env seeds, different Gaussian -- and
@@ -65,7 +66,7 @@ not this one, so 67.0 % bounds the residual rather than measuring it.4. **The co
 Direction unchanged, shape tightened: **H proceeds as a deterministic probe first.** If the two
 implementations agree within 1e-6 the residual is not normalization, nothing is adopted, and the
 number is the evidence. If they differ, the defect is located to a line and only then is an
-episode block worth GPU hours -- 600 seeds, not 200.
+episode block worth GPU hours -- sized by the pilot in §5.1, not fixed at 200.
 
 That was built default-off: `models/normalization.py` (the seam, see §4), the adapter's
 `normalization="processors"` opt-in, `scripts/processor_equiv.py` (§3), `just paired` for the
@@ -240,15 +241,42 @@ did it cost?" — the same shape of test as every other claim here. **It does no
 diverges:** spending GPU hours on a path whose arithmetic already matches is how a null gets
 converted into a false positive.
 
-- **Primary endpoint:** paired McNemar on **600 seeds** (1000-1599), processor path against the
-  buffer path, at **DDIM@10** — the deployment-relevant point and the configuration E0's PARTIAL
-  verdict is about. 600 rather than 200 for the measured reason in §0.2: at 200 the DDPM arm's
-  7 pp had 88 discordant pairs and p = 0.17, so 200 cannot resolve the residual at stake -- and
-  with the control repeated, 600 is itself short of a 4 pp effect. The block is
-  ours on both sides, so it needs no published reference rows. Fixed at 600, reported at final
-  size only (`docs/04` §1).
-- **Secondary:** the same comparison at DDPM@100, which is where the ~8-10 pp residual was measured,
-  and the 1100-1149 band read as **exploratory** (four post-hoc looks; Bonferroni bar 0.0125).
+### 5.1 Size: a 4 pp effect costs 250-2,200 episodes, so a pilot decides
+
+600 was sized when the residual looked like 8 pp. The repeated control moved it to ~4 pp
+(`docs/04` §4), and a smaller effect needs *more* episodes, not fewer. Paired-binary power
+(Connor's formula, `stats.paired_binary_n`, printed by `just arm-power`) prices that at 80 % power:
+
+| effect | psi=0.05 | psi=0.10 | psi=0.20 | psi=0.30 | psi=0.44 |
+|---|---|---|---|---|---|
+| 4 pp | 243 | 489 | 979 | 1,470 | 2,157 |
+| 8 pp | 59 | 121 | 243 | 366 | 538 |
+
+The 9x range is set by `psi`, the fraction of episodes on which the two arms disagree -- not by the
+effect. 44 % is the discordance the DDIM-vs-DDPM comparison actually showed, but those arms differ
+by a *sampler*; two implementations of one mapping that agree to 2.4e-07 can only flip episodes
+sitting within that arithmetic difference of the 0.95 line, which should be far fewer. Which it is
+cannot be known before running, so the size is chosen by a pilot instead of by either prior:
+
+- **Pilot: the first 200 paired episodes.** Report `psi_hat`, the discordant fraction. The branch
+  depends on `psi_hat` alone -- never on the direction or the p-value -- so the final test keeps its
+  nominal size and no result is looked at twice.
+- `psi_hat <= 0.10` -> **600 episodes/arm**: power 0.86 at psi = 0.10, 1.8 GPU-h for both arms.
+- `0.10 < psi_hat <= 0.30` -> **1,600 episodes/arm**: power >= 0.80, 4.8 GPU-h.
+- `psi_hat > 0.30` -> **2,200 episodes/arm, run twice per arm**: power 0.81 at psi = 0.44, 6.6 GPU-h
+  per pass, 13.2 GPU-h for the block. The repeat is not optional at that size -- the episode-level
+  standard error there is ~1.0 pp, the same as the control's measured run-to-run sd, so one pass
+  cannot separate an effect from a fluke; both passes must agree in sign.
+
+- **Primary endpoint:** paired McNemar at the pilot's n, processor path against the buffer path, at
+  **DDIM@10** -- the deployment-relevant point and the configuration E0's PARTIAL verdict is about.
+  Seeds are contiguous from 1000, both arms run at the same count (`eval-dp-processors` and
+  `eval-dp-buffers`), and the block is reported at its final size only. Both arms are ours, so it
+  needs no published reference rows.
+- **Secondary, deliberately not a test:** the DDPM@100 cell is where the residual was measured, but
+  at a resolvable size it costs ~29 GPU-h for the same question, so it is reported as a directional
+  confirmation at 200 episodes and never as a p-value. The 1100-1149 band stays **exploratory**
+  (four post-hoc looks; Bonferroni bar 0.0125).
 - **What would count as H working:** the processor path separated upward on the primary endpoint
   (p < 0.05) and the DDPM@100 cell moving toward 69 %. Partial: separated on the band but not in
   aggregate, in which case the claim stays "normalization was one of several stage costs", the same
@@ -270,7 +298,7 @@ of the residual, which is what `docs/09` says H is for.
 |---|---|---|
 | Step 0 probe + test | < 1 h, no GPU block | 20 observations, one weight load |
 | Adoption (if it continues) | 2-4 h of code, ~60 lines net | one protocol, two implementations, one shim |
-| A/B, primary endpoint | ~0.6 GPU-h | 417 ms per chunk, 200 episodes, measured |
+| A/B, primary endpoint | 1.8-13.2 GPU-h | pilot-scaled n (§5.1) at 417 ms per chunk, 13 chunks/episode, both arms |
 | Risk | a device hop and a reshape bug that runs silently | both pinned by a test in §4.2 |
 | Revert | one commit, default off | condition 3 of the amendment |
 
@@ -295,7 +323,8 @@ just eval-dp-processors
 just paired results/e0_published_seeds.jsonl results/e0_processors.jsonl ddim@10 processors@10
 ```
 
-The first is ~1 GPU-h. The second prints the 2x2 and the exact p-value; nothing is typed by hand.
+The pilot's branch sets the episode count for both (`just arm-power`, §5.1), so the first is
+0.9-6.6 GPU-h per arm. The second prints the 2x2 and the exact p-value; nothing is typed by hand.
 If the processor arm clears, the DDPM@100 block follows before anything in `docs/05` or the
 README changes, because the deployment point is DDIM@10 but the residual was measured at DDPM@100.
 

@@ -39,10 +39,10 @@ has one measured sampler cost and **no measured adapter defect** at 200-episode 
   five-run mean of 62.9 %. The 15 pp Fisher figure compared our DDIM@10 against a DDPM@100 control
   and therefore charged the sampler's share to the adapter; the 8 pp the audit first used came
   from the control's single 134/200 run.
-- **Neither 200 nor 600 seeds resolve that.** Measured, not modelled: the DDPM arm's +7 pp had 88
-  discordant pairs and p = 0.17, and a 4 pp effect would need more than the 600-seed arm was sized
-  for. A block of either size would return "not distinguished" whether or not the truth was a
-  defect, which is why the deterministic probe is the decision rule.
+- **Neither 200 nor a fixed 600 resolves that.** Measured, not modelled: the DDPM arm's +7 pp had
+  88 discordant pairs and p = 0.17, while a 4 pp effect costs 243 episodes at 5 % discordance and
+  2,157 at 44 %. The arm is therefore sized by a pilot (`docs/10` §5.1, `just arm-power`): 600,
+  1,600 or 2,200 episodes per arm, chosen from the observed discordance alone.
 - **Flat coverage lowers H's prior.** 0.884-0.895 across every arm from 45.5 % to 69.0 % success
   means the losses are near-threshold rather than a systematic transform error -- an arithmetic
   bug usually moves coverage too. Step 0 is a refutation test, and passing it is expected.

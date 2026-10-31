@@ -170,6 +170,11 @@ control-spread:
 control-repeats from="2":
     bash scripts/control_repeats.sh {{from}}
 
+# Size any future paired A/B for the effect that actually survives: 4 pp costs 243 episodes at 5 %
+# discordance and 2,157 at 44 %, so the pilot picks the branch (docs/10 section 5.1).
+arm-power effect="0.04":
+    uv run python scripts/arm_power.py --effect {{effect}}
+
 # Option H step 0 (docs/10 section 3): do the checkpoint's eight buffers and lerobot's
 # processor pipelines compute the same arithmetic? Deterministic, no sampler, no episodes, no
 # GPU block; exits non-zero if they differ by more than 1e-6. Run it with the isolated lerobot
@@ -177,12 +182,21 @@ control-repeats from="2":
 processor-equiv checkpoint="checkpoints/diffusion_pusht_migrated":
     .venv-lerobot/Scripts/python.exe scripts/processor_equiv.py --checkpoint {{checkpoint}}
 
-# Option H's episode arm (docs/10 section 5): the library's normalization in the measured path.
-# 600 seeds, because 200 cannot resolve the ~8 pp the adoption is chasing; both arms are ours, so
-# this needs no reference block. "proc" in the config_id is required by rollout.evaluate.
+# Option H's episode arm (docs/10 section 5.1): the library's normalization in the measured path.
+# 600 is the pilot's cheapest branch -- a 4 pp effect costs 243 episodes at 5 % discordance and
+# 2,157 at 44 %, so the pilot's psi_hat decides the count and `eval-dp-buffers` runs the same one.
+# Both arms are ours, so no reference block is needed. "proc" in the config_id is required by
+# rollout.evaluate.
 eval-dp-processors episodes="600" seed_start="1000":
     uv run python scripts/prune_results.py --path results/e0_processors.jsonl --prefix dp_proc
     uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_proc_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 10 --normalization processors --workers 1 --out results/e0_processors.jsonl
+
+# The other half of that A/B: the default buffer path at the same episode count. Without it the
+# comparison is one arm against a 200-episode file, which is the sizing problem section 5.1 exists
+# to fix. No `--normalization` flag, so this is the measured default path.
+eval-dp-buffers episodes="600" seed_start="1000":
+    uv run python scripts/prune_results.py --path results/e0_buffers.jsonl --prefix dp_buf
+    uv run python scripts/evaluate.py --ckpt hf:lerobot/diffusion_pusht --config-id dp_buf_n{{episodes}} --episodes {{episodes}} --seed-start {{seed_start}} --steps 10 --workers 1 --out results/e0_buffers.jsonl
 
 # Do this repo's env wrapper and lerobot's produce the same coverage trace? R5 has been open
 # since 2026-10-19, and the adapter-free control runs inside lerobot's env stack, so an env

@@ -116,8 +116,9 @@ crash costs one shard. What is still manual is *which* runs to do and in what or
 - **Verdict:** contingent, and as of 2026-10-30 **drafted**: the amendment, the audit and the
   adoption design are in `docs/10`, the seam and the opt-in path are in the tree default-off, and
   the decision rule is a deterministic probe (`just processor-equiv`, 1e-6) rather than GPU hours.
-  The episode arm only runs if that probe diverges, and then on 600 seeds, not 200: at 200 a real
-  7 pp effect already read p = 0.17.
+  The episode arm only runs if that probe diverges, and then at a pilot-chosen 600-2,200 episodes
+  (`docs/10` §5.1): 200 cannot resolve the ~4 pp the repeats left, and 4 pp itself costs 243
+  episodes at 5 % discordance against 2,157 at 44 %.
 
 ## Recommended order
 

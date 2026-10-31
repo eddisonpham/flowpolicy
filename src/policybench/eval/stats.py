@@ -15,6 +15,8 @@ compute it with the same code instead of each writing its own sentence.
 from __future__ import annotations
 
 import math
+import random
+import statistics
 
 
 def fisher_exact(a: int, b: int, c: int, d: int) -> float:
@@ -39,7 +41,10 @@ def mcnemar_exact(ours_only: int, theirs_only: int) -> float:
     if n == 0:
         return 1.0
     # 2.0, not 2: `int ** int` is typed Any (a negative exponent returns a float).
-    tail = sum(math.comb(n, i) for i in range(min(ours_only, theirs_only) + 1)) / 2.0**n
+    # Integer denominator, not `2.0**n`: that overflows float once n passes ~1023, which a block
+    # sized for a 4 pp effect reaches, and the tail sum is an exact integer anyway. int / int is
+    # correctly rounded here because the ratio is bounded by 1, so this stays exact at any n.
+    tail = sum(math.comb(n, i) for i in range(min(ours_only, theirs_only) + 1)) / (1 << n)
     return min(1.0, 2 * tail)
 
 
@@ -64,8 +69,6 @@ def paired_delta_ci(
     Only seeds present in every run are used: a seed missing from one run is not evidence about
     the policy. Returns (low, high), or (nan, nan) when nothing is shared.
     """
-    import random
-
     if not control_runs:
         return float("nan"), float("nan")
     shared = sorted(set(ours).intersection(*(set(run) for run in control_runs)))
@@ -86,6 +89,72 @@ def paired_delta_ci(
     lo = deltas[min(n_boot - 1, int((alpha / 2) * n_boot))]
     hi = deltas[min(n_boot - 1, int((1 - alpha / 2) * n_boot))]
     return lo, hi
+
+
+def paired_binary_n(
+    effect: float, discordance: float, *, alpha: float = 0.05, power: float = 0.8
+) -> int:
+    """Episodes needed for a paired McNemar to resolve `effect` at `power`.
+
+    `effect` and `discordance` are absolute rates (0.04 = 4 pp). The formula is Connor's, the
+    paired-binary analogue of the two-sample proportion sample size, and it is written out here
+    because the answer is dominated by the discordance term -- which is why the A/B in `docs/10`
+    section 5 sizes itself from a pilot instead of from a single guess.
+
+    Derivation: under H1 the difference is (b - c)/n with variance (b + c - (b - c)^2/n)/n^2, so
+    with psi = (b + c)/n the standard-error terms are sqrt(psi) under H0 and sqrt(psi - effect^2)
+    under H1. Solving for n gives what follows. Returns a ceiling, and at least 1.
+    """
+    if effect <= 0:
+        raise ValueError("effect must be a positive rate")
+    if not 0 < discordance <= 1:
+        raise ValueError("discordance must be in (0, 1]")
+    if discordance < effect**2:
+        raise ValueError("discordance must be at least effect^2 for the paired test to be defined")
+    normal = statistics.NormalDist()
+    z_alpha = normal.inv_cdf(1 - alpha / 2)
+    z_power = normal.inv_cdf(power)
+    numerator = (
+        z_alpha * math.sqrt(discordance) + z_power * math.sqrt(discordance - effect**2)
+    ) ** 2
+    return max(1, math.ceil(numerator / effect**2))
+
+
+def mcnemar_power(
+    n: int,
+    effect: float,
+    discordance: float,
+    *,
+    alpha: float = 0.05,
+    trials: int = 2000,
+    seed: int = 0,
+) -> float:
+    """Simulated power of the exact McNemar at `n` paired episodes.
+
+    `mcnemar_exact` is an exact test, so the closed-form size above is an approximation to it; this
+    checks the approximation against the test that would actually be run. Episodes are drawn as:
+    discordant with probability `discordance`, and if discordant, favouring one arm in proportion
+    to the split implied by `effect`. Deterministic for a given seed.
+    """
+    if n <= 0:
+        raise ValueError("n must be positive")
+    if discordance < effect or effect < 0:
+        raise ValueError("discordance must be at least the effect")
+    win = (discordance + effect) / 2  # P(arm A wins | episode), the b/n term
+    lose = (discordance - effect) / 2  # P(arm B wins | episode), the c/n term
+    rng = random.Random(seed)
+    hits = 0
+    for _ in range(trials):
+        b = c = 0
+        for _ in range(n):
+            draw = rng.random()
+            if draw < win:
+                b += 1
+            elif draw < win + lose:
+                c += 1
+        if mcnemar_exact(b, c) < alpha:
+            hits += 1
+    return hits / trials
 
 
 def p_text(p: float) -> str:

@@ -202,8 +202,10 @@ it**. The audit moved two numbers rather than the direction:
   the adapter; the 8 pp this audit was first written with came from the control's single 134/200
   run, which sits ~4 sd outside its own repeated band.
 - A 200-seed A/B cannot resolve even 4 pp (the DDPM arm's 7 pp came with 88 discordant pairs and
-  p = 0.17), so the episode arm was re-sized to 600 seeds -- which is still short of what 4 pp
-  would need, one more reason the deterministic probe is the decision rule and the arm never ran.
+  p = 0.17), and 4 pp costs 243 episodes when the two arms disagree on 5 % of them and 2,157 when
+  they disagree on 44 %. So the arm is sized by a pilot rather than fixed at 600 (`docs/10` §5.1,
+  `just arm-power`), both arms run at the same count -- another reason the deterministic probe is
+  the decision rule and the arm never ran.
   Coverage being flat (0.884-0.895)
   across arms from 45.5 % to 69.0 % lowers H's prior: an arithmetic error usually moves coverage
   too. Step 0 is therefore a refutation test, and passing it is the expected outcome.

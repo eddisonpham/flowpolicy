@@ -1,0 +1,54 @@
+{
+  "effect_pp": 4.0,
+  "episodes_per_arm_by_discordance": {
+    "0.04": {
+      "0.05": 243,
+      "0.10": 489,
+      "0.20": 979,
+      "0.30": 1470,
+      "0.44": 2157
+    },
+    "0.08": {
+      "0.05": 59,
+      "0.10": 121,
+      "0.20": 243,
+      "0.30": 366,
+      "0.44": 538
+    }
+  },
+  "branches": [
+    {
+      "rule": "psi_hat <= 0.10",
+      "episodes_per_arm": 600,
+      "passes_per_arm": 1,
+      "power_at_branch_psi": 0.86,
+      "psi": 0.1,
+      "gpu_hours_ddim10": 1.81,
+      "gpu_hours_ddpm100": 7.88
+    },
+    {
+      "rule": "0.10 < psi_hat <= 0.30",
+      "episodes_per_arm": 1600,
+      "passes_per_arm": 1,
+      "power_at_branch_psi": 0.795,
+      "psi": 0.3,
+      "gpu_hours_ddim10": 4.82,
+      "gpu_hours_ddpm100": 21.02
+    },
+    {
+      "rule": "psi_hat > 0.30",
+      "episodes_per_arm": 2200,
+      "passes_per_arm": 2,
+      "power_at_branch_psi": 0.805,
+      "psi": 0.44,
+      "gpu_hours_ddim10": 13.25,
+      "gpu_hours_ddpm100": 57.8
+    }
+  ],
+  "assumptions": {
+    "chunk_ms_ddim10": 417.0,
+    "chunk_ms_ddpm100": 1819.0,
+    "chunks_per_episode": 13.0,
+    "arms": 2
+  }
+}
