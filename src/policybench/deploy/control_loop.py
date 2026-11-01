@@ -27,6 +27,12 @@ import numpy as np
 import torch
 
 from policybench.envs.pusht import MAX_STEPS, PushTEnv
+from policybench.models.observation import (
+    DEFAULT_CAMERA,
+    check_cameras,
+    check_instruction,
+    spec_for,
+)
 from policybench.models.policies import PolicyLike
 
 
@@ -52,6 +58,9 @@ class LoopConfig:
     # loop fall behind on the wall clock. M9.6 measures that because "deadline miss" in
     # virtual time is a counter, not a consequence.
     paced: bool = False
+    # Language slot (models/observation.py). Empty = unconditional, which is what this
+    # checkpoint is; a policy with `requires_instruction` refuses an empty string.
+    instruction: str = ""
 
 
 def blend_chunks(
@@ -97,6 +106,11 @@ def run_episode(
 ) -> dict[str, Any]:
     if cfg.strategy not in {"naive", "temporal-ensemble", "blend"}:
         raise ValueError(f"unknown chunk strategy {cfg.strategy!r}")
+    # Same observation-contract check the eval harness does, before the timed region: this env
+    # supplies one view and the loop carries one instruction (models/observation.py).
+    spec = spec_for(policy)
+    check_cameras(spec, (DEFAULT_CAMERA,))
+    check_instruction(spec, cfg.instruction)
     rng = rng or np.random.default_rng(seed)
     # Same per-episode seeding as the eval harness: the chunk sampler must not
     # depend on the global RNG state left over from earlier episodes.
@@ -129,7 +143,7 @@ def run_episode(
         # up). Without this, the first chunk includes CUDA context and kernel
         # load and biases the mean.
         warm = _obs_batch(frames, states, device)
-        policy.predict_chunk(warm, steps=cfg.sampler_steps)
+        policy.predict_chunk(warm, steps=cfg.sampler_steps, instruction=cfg.instruction)
         if device.startswith("cuda"):
             torch.cuda.synchronize()
         inference_ms: list[float] = []
@@ -154,7 +168,9 @@ def run_episode(
                 if device.startswith("cuda"):
                     torch.cuda.synchronize()
                 t0 = time.perf_counter()
-                chunk = policy.predict_chunk(batch, steps=cfg.sampler_steps)
+                chunk = policy.predict_chunk(
+                    batch, steps=cfg.sampler_steps, instruction=cfg.instruction
+                )
                 if device.startswith("cuda"):
                     torch.cuda.synchronize()
                 elapsed_ms = (time.perf_counter() - t0) * 1000.0

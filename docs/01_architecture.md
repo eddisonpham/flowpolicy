@@ -46,7 +46,16 @@ checkpoint and carries its own normalization, because the checkpoint's statistic
 repo's train-time min/max `Normalizer` are not the same transform. Sampler settings stay call
 arguments: for the pretrained policy, `steps` sets the DDIM ladder length per call.
 
-Rules: normalization stats live inside the checkpoint and are applied inside the policy. The encoder is shared code, instantiated per policy. Sampler settings (steps N, solver) are call arguments, never baked into weights.
+The observation itself has a named contract since 2026-10-31 (`models/observation.py`, see
+[11](11_sota_models.md) section 3). Entries of `obs` other than `state` are **camera names**,
+each `[B, To, C, H, W]`; a policy reading more than the one view `image` declares
+`camera_names`, and one needing a task string declares `requires_instruction` and receives it
+as the `instruction=` call argument. Both attributes are optional, so the default is the
+single-view, unconditional contract every existing row and adapter satisfies, and the
+validators refuse a shortfall instead of duplicating a frame.
+
+Rules: normalization stats live inside the checkpoint and are applied inside the policy. The encoder is shared code, instantiated per policy. Sampler settings (steps N, solver) are call arguments, never baked into weights; so is
+`instruction`.
 
 Env interface (sim and wrappers): Gymnasium-style `reset(seed)`, `step(action)`; wrappers add latency (`LatencyEnv`) and disturbance (`DisturbEnv`). Latency is injected on the observation-to-action path in the control loop, not inside the env physics.
 

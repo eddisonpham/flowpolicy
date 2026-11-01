@@ -26,6 +26,14 @@ class PolicyLike(Protocol):
     `BasePolicy` provides it for trained checkpoints. `PretrainedDiffusionPolicy`
     (models/pretrained.py) provides it for the HF checkpoint, which does its own
     normalization and must not go through the train-time `Normalizer`.
+
+    Observation contract (models/observation.py, docs/11 section 3): `obs` holds `state`
+    (`[B, To, Ds]`) plus one entry per camera view, keyed by name and shaped `[B, To, C, H, W]`.
+    A policy that reads more than the single view `image` declares its names in an optional
+    `camera_names` attribute, and one that needs a task string sets
+    `requires_instruction = True` and receives it as the `instruction=` call argument. Both
+    attributes are optional, so the single-view, unconditional contract stays the default and
+    every existing implementation satisfies it unchanged.
     """
 
     obs_horizon: int

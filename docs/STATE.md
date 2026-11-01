@@ -9,6 +9,35 @@
 | Evidence | `just verify` green (2026-10-30: ruff, ruff format, mypy strict on 29 files, 84 CPU unit tests, 1 smoke test, generated tables/README byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
+## What changed on 2026-10-31 (SOTA research; observation contract landed, no model)
+
+`docs/11_sota_models.md` is the research answer to "use actual SOTA models": the model zoo is
+already a dependency (`lerobot` 0.6.1 ships `pi0`, `pi05`, `smolvla`, `groot`, `wall_x`, `xvla`,
+...), so adoption is an adapter, not new policy code -- but on 8 GB only SmolVLA fits, and it has
+no PushT checkpoint. That hardware fork is the owner's decision and is **not** made here.
+
+What did land is section 7 step 1, the protocol half, because it is the one part that needs no
+GPU and must exist before any VLA row:
+
+- **`models/observation.py`**: `ObservationSpec` (ordered camera names + `requires_instruction`),
+  `spec_for(policy)` reading the optional `camera_names` / `requires_instruction` attributes with
+the historical `("image",)` default, and `check_cameras` / `check_frames` / `check_instruction`.
+- **The language slot is a call argument.** `predict_chunk(obs, steps=..., instruction="")` --
+  `obs` is `dict[str, Tensor]`, so a string cannot live in it. Named `instruction`, not `task`,
+  because rows already use `task: "pusht"` for task identity. Every existing implementation
+  swallows it through `**sampler_kw` without a change.
+- **Threaded through all three boundaries**, each of which refuses rather than guesses: rollout and
+  the control loop refuse declared views the PushT env cannot supply; the HTTP server accepts
+  `cameras: {name: frames}` beside the legacy `image`, refuses a shortfall and a blank required
+  instruction, and advertises `cameras` / `instruction_required` on `GET /health`. Rows gain an
+  `instruction` field only when one was used.
+- **Tests:** `tests/unit/test_observation_contract.py` (15 cases: defaults, declared order,
+  missing view, unconsumed view, shape/horizon, empty instruction) plus socket-level cases in
+  `tests/unit/test_deploy_server.py` where the two views carry distinct pixel values, so a
+  duplicated or swapped view cannot pass.
+- **Nothing measured, nothing adopted.** No adapter, no second camera in the env, no row in
+  `results/` uses the new fields. The next decision is the hardware one (`docs/11` section 5).
+
 ## What changed on 2026-10-30 (option H: audited, amended, scaffolded; nothing run yet)
 
 H was the one gated option. It is now an amendment, a design, default-off code with a

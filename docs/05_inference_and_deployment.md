@@ -140,13 +140,22 @@ dependency this project does not need):
 
 ```
 GET  /health -> {"status": "ok", "policy": "pretrained-dp", "obs_horizon": 2,
-                 "pred_horizon": 16, "action_dim": 2, "steps": 10, "action_horizon": 8}
+                 "pred_horizon": 16, "action_dim": 2, "steps": 10, "action_horizon": 8,
+                 "cameras": ["image"], "instruction_required": false}
 POST /chunk  <- {"image": [[[[r, g, b], ...]]],   # [To, H, W, 3] uint8, 0-255
                  "state": [[x, y], ...],          # [To, 2] raw pixels
+                 "cameras": {"image": ..., "wrist": ...},   # optional, instead of "image"
+                 "instruction": "push the T into the goal",  # optional
                  "steps": 10}                     # optional
              -> {"actions": [[x, y], ...],        # [action_horizon, 2] raw pixels
                  "latency_ms": 183.4, "steps": 10}
 ```
+
+`cameras` and `instruction` are the observation contract from
+[11](11_sota_models.md) section 3, landed 2026-10-31. Both are optional and both default to
+the single-view, unconditional behaviour every earlier row used, so the diffusion checkpoint's
+client is unchanged. `GET /health` advertises which views and whether an instruction is
+required, which is where a client should read them from rather than assume.
 
 Rules the implementation enforces, each one because getting it wrong produces
 plausible-looking actions:
@@ -156,6 +165,13 @@ plausible-looking actions:
 - Actions come back in raw environment pixels: no rescaling on the way out, so the client
   cannot silently disagree with the harness about units.
 - Shapes are validated against `To` (2) and the `3` channels eagerly.
+- View names are checked against the policy's own declaration (`camera_names`), never against
+  position, and **a shortfall is a 400**: a policy that wants two views cannot be served one
+  view duplicated, because a checkpoint fed the same frame twice returns plausible actions and
+  a success rate that means nothing ([11](11_sota_models.md) section 3).
+- A policy that declares `requires_instruction` is a 400 when `instruction` is missing or
+  blank. An unconditional call to a language-conditioned policy is a configuration error, not
+  a policy-quality measurement.
 - Errors are HTTP 400 with `{"error": "<ExceptionType>: <message>"}`.
 - `latency_ms` is measured in-process around `predict_chunk`, with a `torch.cuda.synchronize()`
   on both sides, so it is comparable to the E9 protocol rather than to a network round trip.

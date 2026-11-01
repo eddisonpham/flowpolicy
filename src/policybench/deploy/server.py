@@ -9,15 +9,22 @@ Standard library only, on purpose. Adding a web framework to serve one endpoint 
 dependency this project does not need, and the repo's invariant is that dependencies are
 named before they land.
 
-Contract (documented in `docs/05` section 4):
+Contract (documented in `docs/05` section 3):
 
     GET  /health -> {"status": "ok", "policy": "<name>", "obs_horizon": 2, "action_dim": 2,
-                     "pred_horizon": 16}
+                     "pred_horizon": 16, "cameras": ["image"], "instruction_required": false}
     POST /chunk  <- {"image": [[[[r, g, b], ...]]],   # [To, H, W, 3] uint8, 0-255
                      "state": [[x, y], ...],          # [To, 2] raw pixels
+                     "cameras": {"image": ..., "wrist": ...},   # optional, instead of "image"
+                     "instruction": "<task string>",  # optional; required if the policy says so
                      "steps": 10}                     # optional, default 10
                  -> {"actions": [[x, y], ...],        # [action_horizon, 2] raw pixels
                      "latency_ms": 183.4}
+
+Cameras are named, not positional (models/observation.py): a payload may carry one view as
+`image` or any number under `cameras`, and the names are checked against the policy's own
+declaration. A client that sends one view to a policy expecting two gets HTTP 400, never the
+same frame twice.
 
 Errors are reported as HTTP 400 with `{"error": "<message>"}`. The server never rescales
 actions: the contract is raw pixels in, raw pixels out, the same units the environment
@@ -36,31 +43,70 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from policybench.models.observation import (
+    DEFAULT_CAMERA,
+    ObservationSpec,
+    check_cameras,
+    check_instruction,
+    spec_for,
+)
 from policybench.models.policies import PolicyLike
 
 __all__ = ["PolicyServer", "build_obs", "serve"]
 
 
-def build_obs(payload: Mapping[str, Any], obs_horizon: int, device: str) -> dict[str, Tensor]:
+def _frames(payload: Mapping[str, Any], spec: ObservationSpec) -> dict[str, np.ndarray]:
+    """Pull the named views out of the payload, accepting `image` or `cameras`.
+
+    Both spellings are supported so the single-view rows and clients written before the
+    contract existed keep working; `cameras` is what a multi-view policy needs.
+    """
+    if "cameras" in payload:
+        raw = payload["cameras"]
+        if not isinstance(raw, Mapping):
+            raise ValueError("cameras must be an object of {name: [To, H, W, 3]} arrays")
+        frames = {str(name): np.asarray(value, dtype=np.float32) for name, value in raw.items()}
+    elif DEFAULT_CAMERA in payload:
+        frames = {DEFAULT_CAMERA: np.asarray(payload[DEFAULT_CAMERA], dtype=np.float32)}
+    else:
+        raise ValueError(
+            "no camera in the payload: send 'image' for the single-view contract, or "
+            "'cameras': {name: [[[[r, g, b], ...]]]}"
+        )
+    check_cameras(spec, frames)
+    return frames
+
+
+def build_obs(
+    payload: Mapping[str, Any],
+    obs_horizon: int,
+    device: str,
+    spec: ObservationSpec | None = None,
+) -> dict[str, Tensor]:
     """Turn the JSON observation into the batch the policy interface expects.
 
     Images arrive as 0-255 integers and are scaled to [0, 1] here; the policy applies its
     own normalization afterwards. Shapes are validated eagerly, because a silently
     transposed image produces plausible actions and a useless success rate.
     """
-    image = np.asarray(payload["image"], dtype=np.float32)
+    spec = spec or ObservationSpec()
+    frames = _frames(payload, spec)
+    for name, frame in frames.items():
+        if frame.ndim != 4 or frame.shape[0] != obs_horizon or frame.shape[-1] != 3:
+            raise ValueError(f"{name} must be [To={obs_horizon}, H, W, 3], got {frame.shape}")
+        if float(frame.max(initial=0.0)) <= 1.0:
+            raise ValueError(f"{name} values look normalized; the contract is 0-255 integers")
     state = np.asarray(payload["state"], dtype=np.float32)
-    if image.ndim != 4 or image.shape[0] != obs_horizon or image.shape[-1] != 3:
-        raise ValueError(f"image must be [To={obs_horizon}, H, W, 3], got {image.shape}")
     if state.ndim != 2 or state.shape[0] != obs_horizon:
         raise ValueError(f"state must be [To={obs_horizon}, Ds], got {state.shape}")
-    if float(image.max(initial=0.0)) <= 1.0:
-        raise ValueError("image values look normalized; the contract is 0-255 integers")
-    image = np.ascontiguousarray(image.transpose(0, 3, 1, 2)) / 255.0
-    return {
-        "image": torch.from_numpy(image).unsqueeze(0).to(device),
-        "state": torch.from_numpy(np.ascontiguousarray(state)).unsqueeze(0).to(device),
+    batch: dict[str, Tensor] = {
+        "state": torch.from_numpy(np.ascontiguousarray(state)).unsqueeze(0).to(device)
     }
+    # Built in the policy's declared order, so a view cannot be bound to the wrong slot.
+    for name in spec.cameras:
+        image = np.ascontiguousarray(frames[name].transpose(0, 3, 1, 2)) / 255.0
+        batch[name] = torch.from_numpy(image).unsqueeze(0).to(device)
+    return batch
 
 
 class PolicyServer(ThreadingHTTPServer):
@@ -84,6 +130,9 @@ class PolicyServer(ThreadingHTTPServer):
         self.device = device
         self.steps = steps
         self.action_horizon = action_horizon
+        # What this policy needs from the observation path, read once at construction so
+        # `/health` advertises it and every request is checked against it.
+        self.spec = spec_for(policy)
         super().__init__(address, _Handler)
 
     @property
@@ -122,6 +171,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "action_dim": policy.action_dim,
                 "steps": self.server.steps,
                 "action_horizon": self.server.action_horizon,
+                "cameras": list(self.server.spec.cameras),
+                "instruction_required": self.server.spec.requires_instruction,
             },
         )
 
@@ -139,12 +190,15 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(raw or b"{}")
             policy = self.server.policy
-            obs = build_obs(payload, policy.obs_horizon, self.server.device)
+            spec = self.server.spec
+            instruction = str(payload.get("instruction", ""))
+            check_instruction(spec, instruction)
+            obs = build_obs(payload, policy.obs_horizon, self.server.device, spec)
             steps = int(payload.get("steps", self.server.steps))
             if self.server.device.startswith("cuda"):
                 torch.cuda.synchronize()
             start = time.perf_counter()
-            chunk = policy.predict_chunk(obs, steps=steps)
+            chunk = policy.predict_chunk(obs, steps=steps, instruction=instruction)
             if self.server.device.startswith("cuda"):
                 torch.cuda.synchronize()
             latency_ms = (time.perf_counter() - start) * 1000.0

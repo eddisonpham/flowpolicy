@@ -34,12 +34,15 @@ class StubPolicy(torch.nn.Module):
         super().__init__()
         self.seen: dict[str, Any] = {}
 
-    def predict_chunk(self, obs: dict[str, Tensor], steps: int = 10, **_: Any) -> Tensor:
+    def predict_chunk(
+        self, obs: dict[str, Tensor], steps: int = 10, instruction: str = "", **_: Any
+    ) -> Tensor:
         self.seen = {
             "image_shape": tuple(obs["image"].shape),
             "image_max": float(obs["image"].max()),
             "state": obs["state"].tolist(),
             "steps": steps,
+            "instruction": instruction,
         }
         return torch.tensor([[[i, i + 1] for i in range(16)]], dtype=torch.float32)
 
@@ -47,10 +50,42 @@ class StubPolicy(torch.nn.Module):
         return 0
 
 
+class TwoViewStubPolicy(StubPolicy):
+    """VLA-shaped: two named views and a required instruction (models/observation.py)."""
+
+    camera_names = ("image", "wrist")
+    requires_instruction = True
+
+    def predict_chunk(
+        self, obs: dict[str, Tensor], steps: int = 10, instruction: str = "", **_: Any
+    ) -> Tensor:
+        self.seen = {
+            "image_max": float(obs["image"].max()),
+            "wrist_max": float(obs["wrist"].max()),
+            "instruction": instruction,
+            "steps": steps,
+        }
+        return torch.tensor([[[i, i + 1] for i in range(16)]], dtype=torch.float32)
+
+
 @pytest.fixture
 def served() -> Any:
     policy = StubPolicy()
     server = PolicyServer(("127.0.0.1", 0), policy, name="stub", device="cpu", action_horizon=8)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.port}", policy
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def served_two_view() -> Any:
+    policy = TwoViewStubPolicy()
+    server = PolicyServer(("127.0.0.1", 0), policy, name="vla", device="cpu", action_horizon=8)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -85,6 +120,9 @@ def test_health_reports_the_interface(served: Any) -> None:
     assert body["status"] == "ok"
     assert body["policy"] == "stub"
     assert (body["obs_horizon"], body["pred_horizon"], body["action_dim"]) == (2, 16, 2)
+    # The health payload is where a client learns the observation contract.
+    assert body["cameras"] == ["image"]
+    assert body["instruction_required"] is False
 
 
 def test_chunk_returns_actions_and_normalizes_images(served: Any) -> None:
@@ -128,3 +166,60 @@ def test_already_normalized_images_are_rejected(served: Any) -> None:
     status, body = _post(f"{url}/chunk", payload)
     assert status == 400
     assert "0-255" in body["error"]
+
+
+def _two_view_payload(instruction: str = "push the T into the goal") -> dict[str, Any]:
+    def frames(value: int) -> list[Any]:
+        return [[[value, value, value] for _ in range(96)] for _ in range(96)] * 1
+
+    return {
+        "cameras": {"image": [frames(128)] * 2, "wrist": [frames(200)] * 2},
+        "state": [[100.0, 200.0], [101.0, 201.0]],
+        "instruction": instruction,
+    }
+
+
+def test_two_view_health_advertises_its_contract(served_two_view: Any) -> None:
+    url, _ = served_two_view
+    with urllib.request.urlopen(f"{url}/health", timeout=10) as response:
+        body = json.loads(response.read())
+    assert body["cameras"] == ["image", "wrist"]
+    assert body["instruction_required"] is True
+
+
+def test_two_views_and_an_instruction_reach_the_policy_bound_to_their_names(
+    served_two_view: Any,
+) -> None:
+    """Distinct pixel values per view: a swapped or duplicated view cannot pass this."""
+    url, policy = served_two_view
+    status, body = _post(f"{url}/chunk", _two_view_payload())
+    assert status == 200, body
+    assert policy.seen["image_max"] == pytest.approx(128 / 255)
+    assert policy.seen["wrist_max"] == pytest.approx(200 / 255)
+    assert policy.seen["instruction"] == "push the T into the goal"
+
+
+def test_one_view_cannot_satisfy_a_two_view_policy(served_two_view: Any) -> None:
+    url, _ = served_two_view
+    payload = _payload()
+    payload["instruction"] = "push the T into the goal"
+    status, body = _post(f"{url}/chunk", payload)
+    assert status == 400
+    assert "wrist" in body["error"]
+
+
+def test_a_two_view_policy_refuses_an_empty_instruction(served_two_view: Any) -> None:
+    url, _ = served_two_view
+    payload = _two_view_payload(instruction="")
+    status, body = _post(f"{url}/chunk", payload)
+    assert status == 400
+    assert "instruction" in body["error"]
+
+
+def test_a_payload_with_no_camera_is_a_400(served: Any) -> None:
+    url, _ = served
+    payload = _payload()
+    payload.pop("image")
+    status, body = _post(f"{url}/chunk", payload)
+    assert status == 400
+    assert "no camera in the payload" in body["error"]

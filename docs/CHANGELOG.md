@@ -638,3 +638,43 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   episodes, so the only route is an adapter-free VQ-BeT reference this repo runs itself (~1.75
   GPU-h per arm at 201 episodes per 3.6 min, measured). Not run. `docs/04` §3's E15 claim and its
   falsifier now say that instead of asking for "a further 200-seed block".
+
+## 2026-10-30: `docs/11` surveys the models this wrapper could carry
+
+- **Added `docs/11_sota_models.md`**: the landscape of open-weight policies as of today, what each
+  one costs to adopt behind `PolicyLike`, and the two protocol seams that do not exist yet (a
+  language slot and N camera views). No code, no rows, no claims moved -- it is a research page with
+  sources tagged [V]/[S]/[U] and a "false if" condition per option.
+- **The finding that changes scope:** the pinned `lerobot` 0.6.1 already ships `pi0`, `pi05`,
+  `pi0_fast`, `smolvla`, `groot`, `wall_x`, `xvla`, `molmoact2` and `envs/libero.py`, so the model
+  zoo costs no new dependency and no new policy code -- one adapter keyed off the checkpoint's own
+  `config.json` type covers four of them. Their configs (chunk 50/40, 32- or 132-wide padded
+  actions, 10 flow steps) are the same shape the existing protocol already expresses.
+- **The finding that constrains it:** π0 needs 14 GB at inference (openpi asks for >8 GB, `lerobot`
+  documents 14 GB) and this host has 8 GB, so SmolVLA is the only VLA measurable here, and it has no
+  PushT checkpoint -- the VLA arm needs a different task (LIBERO), which is the same environment
+  archaeology that made option D expensive. Recorded as a decision for the owner rather than a
+  plan, because it changes the README's one-consumer-GPU promise.
+
+## 2026-10-31: the observation contract gains named cameras and a language slot
+
+- **`models/observation.py`** (`ObservationSpec`, `spec_for`, `check_cameras`, `check_frames`,
+  `check_instruction`): the contract was implicit and single-view -- `obs` had exactly `image`
+  and `state`, and nothing could carry a task string -- so no VLA could be expressed at all.
+  Views are now **named** and validated against what the policy declares in an optional
+  `camera_names`; the instruction travels as the `instruction=` call argument, because `obs` is
+  `dict[str, Tensor]` and a string cannot live there. It is called `instruction` rather than
+  `task` because rows already use `task: "pusht"` for task identity.
+- **Default-off, by construction.** Both attributes are optional, so `("image",)` +
+  unconditional is the default every existing adapter, row and test already satisfies: nothing
+  was re-measured and no row's meaning changed. The diffusion and VQ-BeT adapters were not
+  edited; they absorb `instruction` through `**sampler_kw`.
+- **Refusals, not guesses, at all three boundaries.** Rollout and the control loop refuse
+  declared views the PushT env cannot supply; the HTTP server takes `cameras: {name: frames}`
+  beside the legacy `image`, returns 400 when a view is missing or a required instruction is
+  blank, and advertises `cameras` / `instruction_required` on `GET /health`. Feeding one frame
+  into two slots is the failure `docs/10` exists to prevent, so it is a hard error: a checkpoint
+  fed the same view twice returns plausible actions and a success rate that means nothing.
+- **Tests:** new `tests/unit/test_observation_contract.py` (15 cases, CPU) and five socket-level
+  cases in `tests/unit/test_deploy_server.py`, where the two views carry distinct pixel values
+  so a duplicated or swapped view cannot pass. Rationale and scope: `docs/11` section 3.

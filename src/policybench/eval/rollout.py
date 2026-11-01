@@ -23,6 +23,12 @@ from policybench.data.normalizer import Stats
 from policybench.envs.pusht import MAX_STEPS, PushTEnv
 from policybench.eval.metrics import assert_seed_disjoint
 from policybench.models.normalization import config_id_marks_path
+from policybench.models.observation import (
+    DEFAULT_CAMERA,
+    check_cameras,
+    check_instruction,
+    spec_for,
+)
 from policybench.models.policies import PolicyLike, build_policy
 from policybench.models.pretrained import PretrainedDiffusionPolicy
 
@@ -163,6 +169,7 @@ def rollout_episode(
     max_steps: int = MAX_STEPS,
     record_latency: bool = True,
     noise_seed_offset: int = 0,
+    instruction: str = "",
 ) -> dict[str, float]:
     # Seed the policy's stochastic sampler per episode. Without this the flow
     # sampler draws from whatever global RNG state the worker happens to hold,
@@ -174,6 +181,12 @@ def rollout_episode(
     # noise stream we drew" a measurable question: env episodes stay identical,
     # only the sampler's initial noise changes. Offset 0 is the historical
     # behaviour, so every earlier row keeps its exact number.
+    # The observation contract is checked before the episode starts, not per chunk: this env
+    # supplies one view (`image`), so a policy declaring more is refused here rather than fed
+    # the same frame twice (models/observation.py, docs/11 section 3).
+    spec = spec_for(policy)
+    check_cameras(spec, (DEFAULT_CAMERA,))
+    check_instruction(spec, instruction)
     noise_seed = int(env_seed) + int(noise_seed_offset)
     torch.manual_seed(noise_seed)
     if torch.cuda.is_available():
@@ -196,7 +209,7 @@ def rollout_episode(
                 if device.startswith("cuda"):
                     torch.cuda.synchronize()
                 t0 = time.perf_counter()
-                chunk = policy.predict_chunk(batch, steps=sampler_steps)
+                chunk = policy.predict_chunk(batch, steps=sampler_steps, instruction=instruction)
                 if device.startswith("cuda"):
                     torch.cuda.synchronize()
                 if record_latency:
@@ -242,6 +255,7 @@ def _init_worker(
     dtype: str,
     noise_seed_offset: int,
     normalization: str,
+    instruction: str,
 ) -> None:
     torch.set_num_threads(1)
     policy, meta = load_policy(
@@ -259,6 +273,7 @@ def _init_worker(
         steps=sampler_steps,
         horizon=action_horizon,
         noise_offset=noise_seed_offset,
+        instruction=instruction,
     )
 
 
@@ -273,6 +288,7 @@ def _run_episodes(seeds: list[int]) -> list[dict[str, Any]]:
             action_horizon=_WORKER["horizon"],
             device=_WORKER["device"],
             noise_seed_offset=offset,
+            instruction=_WORKER["instruction"],
         )
         out.append(
             {
@@ -292,6 +308,7 @@ def _stamp(
     sampler_steps: int,
     action_horizon: int,
     noise_seed_offset: int,
+    instruction: str = "",
 ) -> None:
     """Attach the run's metadata to one episode row.
 
@@ -304,6 +321,10 @@ def _stamp(
     row["action_horizon"] = action_horizon
     row["weights"] = str(row.get("weights", "ema"))
     row["noise_seed_offset"] = int(noise_seed_offset)
+    # Stamped only when an instruction was actually used. Every row written before this seam
+    # existed has no instruction, and an empty string is that absence, not a measurement.
+    if instruction:
+        row["instruction"] = instruction
 
 
 # Chunks per worker: the unit of "what a crash costs". One chunk per worker (the old shape) meant
@@ -353,6 +374,7 @@ def evaluate(
     dtype: str = "float32",
     noise_seed_offset: int = 0,
     normalization: str = "buffers",
+    instruction: str = "",
 ) -> list[dict[str, Any]]:
     """Run `eval_seeds` and append one JSON line per episode to `out_path`.
 
@@ -403,6 +425,7 @@ def evaluate(
                 dtype,
                 int(noise_seed_offset),
                 normalization,
+                instruction,
             ),
         ) as pool,
         partial.open("a" if done else "w", encoding="utf-8", newline="\n") as partial_fh,
@@ -416,6 +439,7 @@ def evaluate(
                     sampler_steps=sampler_steps,
                     action_horizon=action_horizon,
                     noise_seed_offset=int(noise_seed_offset),
+                    instruction=instruction,
                 )
                 partial_fh.write(json.dumps(row) + "\n")
             partial_fh.flush()
