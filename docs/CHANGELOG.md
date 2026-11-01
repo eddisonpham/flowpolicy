@@ -678,3 +678,27 @@ Paths in entries below refer to where files lived on the date of the entry. The 
 - **Tests:** new `tests/unit/test_observation_contract.py` (15 cases, CPU) and five socket-level
   cases in `tests/unit/test_deploy_server.py`, where the two views carry distinct pixel values
   so a duplicated or swapped view cannot pass. Rationale and scope: `docs/11` section 3.
+
+## 2026-11-01: RTC against the cross-fade has no like-for-like form, and that is the finding
+
+- **The comparison was resolved by reading the shipped code, not by running it.** `lerobot` 0.6.1
+  ships RTC under `policies/rtc/` (there is no `lerobot/rtc/`): `RTCProcessor.denoise_step` wraps a
+  *velocity* callable, derives `x1_t = x_t - time * v_t`, and returns
+  `v_t - min(1/tau, max_guidance_weight) * (prev_chunk_left_over - x1_t) * weights` under
+  `torch.enable_grad()`, prefix from `get_prefix_weights` (`LINEAR`, `execution_horizon` 10,
+  `max_guidance_weight` 10.0). Its only entry point is `policies/common/flow_matching.py::
+  euler_integrate`, imported by `eo1`, `multi_task_dit`, `pi0`, `pi05`, `smolvla`; `rtc_config` is
+  declared only by `evo1`, `groot`, `molmoact2`, `pi0`, `pi0_fast`, `pi05`, `smolvla`. **The
+  `policies/diffusion/` module has no RTC reference at all** [V, grep 2026-11-01].
+- **So there is nothing to compare on the same episodes.** The 60 `blend-r2` rows are DDIM
+  epsilon-prediction on `lerobot/diffusion_pusht`, which has no velocity field for the guidance
+  term; our three `predict_chunk` implementations are closed `@torch.no_grad()` samplers with no
+  per-step hook, so they cannot wrap an Euler step the way RTC needs; and the only flow
+  checkpoints on this host are
+  `e1_flow_s0..s2`, the ablation models D11 retired at 4-7 % success. A like-for-like row needs a
+  second policy (SmolVLA on LIBERO), which is `docs/11` V3 and needs V4's environment work first.
+- **Recorded instead of forced:** `docs/05` section 2 and `docs/11` section 4.3 now carry the
+  obstruction with its evidence, `docs/11` no longer promises that a same-episodes run would
+  upgrade the cross-fade paragraph, and its V3 row names the second policy as a prerequisite. No
+  GPU time spent, no row written, and the cross-fade's own result (coverage up, success flat
+  against temporal ensembling) is unchanged.

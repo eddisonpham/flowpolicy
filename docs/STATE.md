@@ -9,6 +9,33 @@
 | Evidence | `just verify` green (2026-10-30: ruff, ruff format, mypy strict on 29 files, 84 CPU unit tests, 1 smoke test, generated tables/README byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
+## What changed on 2026-11-01 (RTC: the comparison has no like-for-like form; recorded, not run)
+
+The open item was "measure upstream RTC against the hand-built cross-fade on the same episodes".
+It was closed by reading the shipped implementation, and the answer is that the experiment as
+framed does not exist. No GPU time was spent and no row was written.
+
+- **RTC is flow-matching only.** `lerobot` 0.6.1 ships it at `policies/rtc/` (not `lerobot/rtc/`).
+  `RTCProcessor.denoise_step` wraps a *velocity* callable, derives `x1_t = x_t - time * v_t` and
+  applies `v_t - min(1/tau, max_guidance_weight) * (prefix - x1_t) * weights` under
+  `torch.enable_grad()`. Its only entry point is
+  `policies/common/flow_matching.py::euler_integrate` (imported by `eo1`, `multi_task_dit`, `pi0`,
+  `pi05`, `smolvla`); `rtc_config` is declared by `evo1`, `groot`, `molmoact2`, `pi0`, `pi0_fast`,
+  `pi05`, `smolvla`. **`policies/diffusion/` has no RTC reference at all**, and the 60 `blend-r2`
+  rows are DDIM epsilon-prediction on `lerobot/diffusion_pusht` -- no velocity field.
+- **Two further walls, both checked.** RTC wraps every Euler step with the leftover prefix and a
+  gradient enabled inside it, while our `predict_chunk` implementations are closed
+  `@torch.no_grad()` samplers with no per-step hook (graph-captured on the fast-sampler path), so
+  RTC needs its own loop rather than the adapter; and the only flow checkpoints on this host are
+  `e1_flow_s0..s2`, the ablation models D11 retired at 4-7 % success.
+- **Written down instead of forced:** `docs/05` section 2 and `docs/11` section 4.3 now carry the
+  obstruction with its evidence. `docs/11` section 4.3 no longer promises that a same-episodes run
+  would upgrade the cross-fade paragraph, and its V3 row states that a second policy (SmolVLA on
+  LIBERO, which needs V4's environment work and a rented GPU) is a prerequisite.
+- **What the cross-fade keeps:** coverage up, success flat against temporal ensembling -- unchanged
+  by this. RTC being unavailable on this checkpoint is a scope fact about flow policies, not a
+  defect in the chunking strategy or a gap in this repo.
+
 ## What changed on 2026-10-31 (SOTA research; observation contract landed, no model)
 
 `docs/11_sota_models.md` is the research answer to "use actual SOTA models": the model zoo is

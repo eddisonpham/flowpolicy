@@ -107,6 +107,39 @@ against naive replacement's 0.749 / 0.553) but does not recover success (26.7 % 
 the policy reach the goal without converting, which is the useful separation: what buys
 success is averaging several overlapping chunks, not hiding the discontinuity between two.
 
+**Upstream RTC was read, not adopted, and the same-episodes comparison does not exist
+(2026-11-01).** `lerobot` 0.6.1 ships the published version of that strategy under
+`policies/rtc/`, so it was read in full rather than assumed. `RTCProcessor.denoise_step` wraps a
+**velocity** callable, derives `x1_t = x_t - time * v_t`, and returns
+`v_t - min(1/tau, max_guidance_weight) * (prev_chunk_left_over - x1_t) * weights` computed inside
+`torch.enable_grad()`, with the prefix from `get_prefix_weights` (`LINEAR` by default,
+`execution_horizon` 10, `max_guidance_weight` 10.0). Its only entry point is
+`policies/common/flow_matching.py::euler_integrate`, which is imported by `eo1`, `multi_task_dit`,
+`pi0`, `pi05` and `smolvla`; `rtc_config` is declared only by `evo1`, `groot`, `molmoact2`,
+`pi0`, `pi0_fast`, `pi05` and `smolvla`. **`policies/diffusion/` contains no reference to RTC at
+all** [V, grep of the installed package, 2026-11-01], so the DDIM checkpoint every row in this
+section was measured on has no velocity field for the guidance term to act on -- the same fact
+that made "inpainting" unimplementable in the first place.
+
+Two further obstructions, verified rather than inferred:
+
+- **Our adapters cannot carry the loop.** RTC wraps *every* Euler step, not the chunk: each step
+  needs the leftover prefix, `inference_delay`, and a gradient enabled inside it. Our three
+  `predict_chunk` implementations are closed samplers under `@torch.no_grad()` that expose no
+  per-step velocity hook (and on the fast-sampler path the loop is a captured CUDA graph, E14).
+  So even on a flow checkpoint, RTC needs its own sampler, not this `predict_chunk`.
+- **The only flow checkpoints on this host are the retired ablation models.**
+  `checkpoints/e1_flow_s0..s2` are the from-scratch flow policies D11 took out of the measured
+  stack at 4-7 % success, and there is no published flow-matching checkpoint for PushT. RTC on
+  those is a real measurement of coverage and chunk disagreement, but a success comparison
+  around a floor.
+
+So "upstream RTC against the cross-fade on the same episodes" has **no like-for-like form**: the
+blend rows are `blend-r2` on a DDIM checkpoint (60 rows, 30 each at 100 and 200 ms,
+`results/deploy.jsonl`), and RTC cannot run on that policy. The nearest honest comparison is a
+different policy on the same episodes, which is a different experiment -- recorded as option V3
+in [11](11_sota_models.md) section 4.3, not reported here as a result.
+
 **Wall-clock pacing (M9.6).** E10/E12 run in virtual time: inference is timed for real, but
 the loop never sleeps, so "deadline miss" is a counter. `--paced` sleeps to the next tick and
 records, per tick, how far behind the wall clock the loop is (`late_ticks`, `lateness_mean_ms`,

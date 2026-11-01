@@ -156,17 +156,43 @@ which is the actual product story: the wrapper does not care who computes the ch
 `lerobot` 0.6.1 ships Real-Time Chunking: a guidance term added to the flow-matching denoising
 loop so the new chunk's overlap tracks the already-executed tail, with
 `execution_horizon` 8-12, `max_guidance_weight` 10.0 and an exponential prefix schedule [V].
-It applies to flow-matching policies only (π0, π0.5, SmolVLA)  -- not to this repo's DDIM
-diffusion checkpoint.
+It lives at `policies/rtc/` (there is no `lerobot/rtc/`) and applies to the flow/DiT families
+that declare `rtc_config` -- `evo1`, `groot`, `molmoact2`, `pi0`, `pi0_fast`, `pi05`, `smolvla`
+[V, grep of the installed package, 2026-11-01] -- and **not** to this repo's DDIM diffusion
+checkpoint, whose `policies/diffusion/` module has no RTC reference at all.
 
-This is the one adoption where our measurement machinery is uniquely valuable, and it is direct
-evidence about a decision already taken: `docs/05` section 2 records that the third chunking
-strategy was implemented as a *cross-fade* because "inpainting-style" conditioning needs a
-policy that accepts action conditioning, and that the cross-fade recovered coverage
-(0.875 vs 0.749) without recovering success (26.7 % vs 53.3 % for temporal ensembling). RTC is
-the published version of the thing that was approximated by hand. Measuring it on the same
-episodes would either upgrade that paragraph from a limitation to a result, or confirm that
-averaging, not conditioning, is what buys success.
+This looked like the one adoption where our measurement machinery is uniquely valuable, because
+`docs/05` section 2 records that the third chunking strategy was implemented as a *cross-fade*
+(the cross-fade recovered coverage, 0.875 vs 0.749, without recovering success, 26.7 % vs 53.3 %
+for temporal ensembling), and RTC is the published version of what was approximated by hand.
+
+**Read in full 2026-11-01: the same-episodes comparison does not exist.** The earlier version of
+this paragraph promised that measuring RTC "on the same episodes" would either upgrade that
+paragraph or confirm that averaging is the mechanism. It cannot, for three verified reasons, and
+they are recorded here so the option is not re-proposed as cheap:
+
+1. **RTC needs a velocity field.** `RTCProcessor.denoise_step` wraps a velocity callable, derives
+   `x1_t = x_t - time * v_t` and returns `v_t - min(1/tau, max_guidance_weight) * (prefix - x1_t)
+   * weights`. The DDIM checkpoint behind every blend row is epsilon-prediction; there is no
+   velocity for the term to act on. This is the same obstruction that shipped a cross-fade
+   instead of "inpainting" in the first place.
+2. **Its only entry point is a different loop.** `euler_integrate` in
+   `policies/common/flow_matching.py` is the sole hook (imported by `eo1`, `multi_task_dit`,
+   `pi0`, `pi05`, `smolvla`), and RTC wraps every Euler step with the leftover prefix and a
+   gradient enabled inside it (`torch.enable_grad`, `torch.autograd.grad`). Our `predict_chunk`
+   implementations are closed samplers under `@torch.no_grad()` with no per-step hook -- and the
+   fast-sampler path is a captured CUDA graph -- so RTC cannot ride the adapter even on a flow
+   checkpoint; it needs its own sampler.
+3. **No flow checkpoint here has a meaningful success rate.** `checkpoints/e1_flow_s0..s2` are the
+   from-scratch ablation models D11 retired at 4-7 %; there is no published flow-matching
+   checkpoint for PushT. Coverage and chunk disagreement would be measurable, success would be
+   a floor.
+
+So a like-for-like RTC-vs-cross-fade row requires a **second policy**, which is V3 below (SmolVLA
+on LIBERO, a rented GPU, and V4's environment work first). What remains true and useful: the
+cross-fade's measured separation -- coverage up, success flat against temporal ensembling -- is
+unchanged, and RTC is now correctly scoped as a property of flow policies rather than a gap in
+this repo's chunking strategy.
 
 ## 5. Fit against this host, and the honest cost
 
@@ -196,7 +222,7 @@ not be made implicitly by an adapter landing first.
 |---|---|---|---|---|
 | V1 | `task` + multi-camera observation amendment, then a generic `PretrainedLeRobotPolicy` keyed off the checkpoint's `config.json` `type` (covers smolvla / pi0 / pi05 / groot with one class) | 1-2 days, no GPU | The actual "wrap real models" claim, with one adapter instead of four | A published LIBERO cell cannot be reproduced within its own reported interval -- then the wrapper is not policy-agnostic and *that* is the result |
 | V2 | `RemotePolicy` client against openpi websocket / GR00T ZMQ, with a separate transport-inclusive latency table | 1-2 days + rented GPU | Deployment-honest latency; three servers not maintained by us | The transport number moves by more than the queueing term the server itself reports, i.e. the measurement is about the network, not the policy |
-| V3 | RTC in-process on a SmolVLA checkpoint, same episodes vs naive / temporal ensemble / our cross-fade | 1 day + GPU | Upgrades the cross-fade limitation into a measured comparison; converges with upstream | RTC does not beat temporal ensembling on success at the same latency -- then conditioning is not the mechanism and `docs/05` was right |
+| V3 | RTC in-process on a SmolVLA checkpoint, same episodes vs naive / temporal ensemble / our cross-fade. **Not available on the diffusion checkpoint (section 4.3): RTC is flow-only and needs a grad-enabled loop, so a second policy is a prerequisite, not a convenience** | 1 day + GPU, after V4 | Upgrades the cross-fade limitation into a measured comparison; converges with upstream | RTC does not beat temporal ensembling on success at the same latency -- then conditioning is not the mechanism and `docs/05` was right |
 | V4 | LIBERO as the task arm (needed for V1 at all) | 3-5 days of environment work | The only place VLA success numbers can be reproduced against a published cell | The env cannot be pinned reproducibly on Windows, which is the current expectation given mujoco/robosuite history |
 | V5 | Port π0's flow loop onto `fast_sampler` | weeks | Nothing for us | Would violate rule 2 by owning third-party denoiser code; declines itself |
 | V6 | Train or fine-tune a VLA | weeks + GPUs | Not this project | Violates rule 1; the from-scratch ablation is the recorded reason |
