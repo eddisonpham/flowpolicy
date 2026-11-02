@@ -187,6 +187,14 @@ power-audit:
 processor-equiv checkpoint="checkpoints/diffusion_pusht_migrated":
     .venv-lerobot/Scripts/python.exe scripts/processor_equiv.py --checkpoint {{checkpoint}}
 
+# Step 0 for the VLA adapter (docs/11 section 4.4): can the leftover the control loop holds be
+# mapped into the normalized, 32-padded space RTC guides in, and back, without loss -- and would a
+# unit error there be loud or silent? Deterministic, CPU, no checkpoint, no episode, no GPU. It
+# exits non-zero if any identity or the wrong-units separation fails, so it fails loudly rather
+# than reporting "close enough". `--out` writes results/smolvla_leftover_probe.json.
+leftover-probe:
+    uv run python scripts/smolvla_leftover_probe.py
+
 # Option H's episode arm (docs/10 section 5.1): the library's normalization in the measured path.
 # 600 is the pilot's cheapest branch -- a 4 pp effect costs 243 episodes at 5 % discordance and
 # 2,157 at 44 %, so the pilot's psi_hat decides the count and `eval-dp-buffers` runs the same one.

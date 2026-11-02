@@ -1,0 +1,37 @@
+{
+  "bar": 1e-05,
+  "stats": "synthetic",
+  "action_dim": 7,
+  "model_dim": 32,
+  "chunk_size": 50,
+  "execution_horizon": 10,
+  "schedule_shape": [
+    1,
+    50,
+    1
+  ],
+  "checks": {
+    "roundtrip_raw": 0.0,
+    "roundtrip_model": 2.384185791015625e-07,
+    "pad_written": 0.0,
+    "pad_ignored": 0.0,
+    "rtc_closed_form": 0.0,
+    "rtc_fixed_point": 0.0,
+    "rtc_final_step_unguided": 0.0,
+    "schedule_tail_zero": 0.0,
+    "library_pads_narrow_leftover": 0.0
+  },
+  "verdicts": {
+    "wrong_units_are_detectable": true
+  },
+  "notes": {
+    "fixed_point_correct_units": 0.0,
+    "fixed_point_raw_units": 1.8961825370788574,
+    "step_right_units": 4.254400253295898,
+    "guidance_weight_noise_end": 10.0,
+    "guidance_weight_action_end": 0.0
+  },
+  "worst": 2.384185791015625e-07,
+  "pass": true,
+  "verdict": "the leftover maps into model space losslessly and a unit error breaks the fixed point it otherwise satisfies exactly; the adapter may be written against PaddedActionSpace"
+}
