@@ -702,3 +702,120 @@ Paths in entries below refer to where files lived on the date of the entry. The 
   upgrade the cross-fade paragraph, and its V3 row names the second policy as a prerequisite. No
   GPU time spent, no row written, and the cross-fade's own result (coverage up, success flat
   against temporal ensembling) is unchanged.
+
+## 2026-11-01: RTC on SmolVLA scoped, and the cost column tagged measured vs estimated
+
+- **The RTC loop is reachable on SmolVLA without new sampler code.** `SmolVLAPolicy.predict_action_chunk`
+  forwards `prev_chunk_left_over`, `inference_delay` and `execution_horizon` into
+  `euler_integrate(..., rtc_enabled=...)`, and `select_action` asserts RTC is off, so the blessed
+  entry point is the whole-chunk call that `PolicyLike` already is [V]. `rtc_config` defaults to
+  `None` and `init_rtc_processor()` re-attaches to a built model, so enabling it is a construction
+  change, not a checkpoint edit. The obstructions recorded the same day are about *our* adapters
+  driving *our* diffusion samplers; `docs/05` section 2 now says so explicitly.
+- **What blocks V3 is the environment, not the strategy.** `HuggingFaceVLA/smolvla_libero` exists
+  (apache-2.0, base `lerobot/smolvla_base`) but its card is the generic lerobot stub with no eval
+  table, so the acceptance cell is `lerobot`'s docs figure (~81.5 % spatial) [S]; the checkpoint wants
+  **two** 3x256x256 views (state 8, action 7) and a 48-token language processor, while `transformers`
+  (a lerobot extra) and `robosuite` / `mujoco` / `libero` / `bddl` are all absent here, and PyPI
+  `libero` is sdist-only 0.1.1 [V].
+- **The published recipe has no chunk left over to guide.** Its `config.json` sets
+  `n_action_steps: 1` against `chunk_size` 50 [V], so RTC's premise is absent until the arm raises the
+  cadence -- and raising it departs from the published recipe, which means the naive baseline must be
+  re-measured at that cadence rather than quoted from the cell.
+- **The block is sized, the GPU-hours are not.** `stats.resolvable_effect` gives 5.6 pp at 500 paired
+  episodes with 20 % discordance (8.3 pp at 44 %), so LIBERO-Spatial's own 10x50 is sufficient; but
+  SmolVLA's per-chunk cost has no anchor on this GPU (E9's 181-417 ms is a 263 M diffusion policy) and
+  the 13-chunks-per-episode unit cost was measured on 300-step PushT episodes [V, computed today].
+- **`docs/11` section 6's cost column is annotated.** Two cells are measurements (V1's protocol half at
+  zero GPU-hours; V4's absent dependencies), the rest are person-day estimates, and the measured unit
+  economics -- 13 chunks/episode, 181 / 417 / 1819 ms per chunk, a 200-episode block at 2 h 58 m, VQ-BeT
+  500 episodes in ~6 min -- are listed with the explicit warning that none of it transfers to LIBERO.
+  Section 4.4 carries the full checklist. No code, no rows, no GPU time.
+
+## 2026-11-01: V4 priced -- the port is the expensive path
+
+- **The port was walked, and it is 2-4 days rather than a shim.** Five walls, each observed: the
+  removed `single_arm_env` module (a ~30-line shim clears it), `mount_types` -> `base_types`, the
+  removed `robots.single_arm.SingleArm`, the removed `load_controller_config`, and `lite_physics`
+  defaulting to `True` where 1.4.0 had no such flag. The third is architectural: a naive
+  `SingleArm = FixedBaseRobot` clears every import and then raises `KeyError: 'MountedMountedPanda'`,
+  because 1.4.0's `SingleArm` is a full robot implementation and 1.5.2 split that layer into `Robot`
+  + `FixedBaseRobot` + composite controllers over concrete subclasses. LIBERO dispatches through that
+  generic class, so re-expressing its two robot models means translating controller configs inside a
+  third party's environment, at the seam where the physics live. `docs/11` 4.5.
+- **The Linux path is 0.5 setup days and $3-10.** `robosuite==1.4.0` is what LIBERO declares, so all
+  five walls disappear; at 2026-11 rates (4090 $0.34-0.69/hr, A100 $1.19-1.39/hr) the rental is a
+  rounding error against 2-4 engineer-days. The recommendation is to pick the platform, not to port.
+  `docs/11` 5.1.
+- **The SmolVLA block now has GPU-hours.** 500 episodes x 28 chunks at 150 / 250 / 700 ms is 1.4 /
+  1.75 / 3.5 h per arm; three arms plus the naive re-baseline and a pilot is **6-9 h central, ~25 h
+  pessimistic**. The per-chunk band is still an extrapolation, and one pilot episode is what replaces
+  it. Section 6's V3 and V4 cost cells now cite computed figures instead of blanks.
+
+## 2026-11-01: the VLA adapter's leftover contract decided on CPU, and it passes
+
+- **What was undecided, now is.** RTC's guidance acts on `x_t` inside the flow loop -- the
+  checkpoint's space (normalized over 7 dims, zero-padded to 32) -- while `deploy/control_loop.py`
+  holds raw env units and `lerobot` slices the pad off and unnormalizes before returning. So the
+  adapter must rebuild the leftover, and rebuilding it wrongly is silent: plausible actions, a
+  broken success rate, the defect shape `docs/10` was written about. `scripts/smolvla_leftover_probe.py`
+  (`just leftover-probe`) decides it on CPU, with no checkpoint, no episode, no `transformers` and
+  no GPU time.
+- **`src/policybench/models/leftover.py` is the seam.** `PaddedActionSpace` owns
+  normalize-then-pad and slice-then-unnormalize; one affine covers both declared normalizations
+  (`MIN_MAX` is `MEAN_STD` about `(low + high) / 2` with `(high - low) / 2` as the spread); a
+  non-invertible table is refused rather than clamped. The probe imports it, so it measures what
+  the adapter will ship instead of a copy of it.
+- **Nine identities at 1e-5, eight exactly 0.0** (worst 2.4e-07, the float32 round trip)
+  [V, `results/smolvla_leftover_probe.json`]: raw -> model -> raw, model -> raw -> model, the pad
+  written as zeros, garbage in dims 7-31 discarded, the guided step equal to its closed form, a
+  leftover equal to `x1_t` giving exactly zero guidance, the final Euler step unguided, the
+  schedule's tail zero, and a 7-dim leftover guiding identically to the same 7 dims widened with
+  our own pad.
+- **The gradient inside RTC is the identity -- measured, not assumed.** `denoise_step` detaches
+  `x_t` before `requires_grad_(True)`, so the velocity has no graph to `x_t`, `correction == err`,
+  and the guided step is `v - clamp(w) * (leftover - x1_t) * weights` to 0.0. The action expert's
+  Jacobian never enters, so only the leftover's units and the prefix weights shape guidance.
+- **The failure mode is loud.** A leftover equal to `x1_t` gives exactly 0 in model space and 1.896
+  (model units) when the same tensor is supplied raw, so a unit error is visible from one synthetic
+  step rather than only from a success rate.
+- **Two facts that change how the V3 arm reads.** `weights` is `(1, 50, 1)`: the prefix schedule is
+  per chunk step, not per action dim, so `execution_horizon` cuts the chunk. And the guidance weight
+  is `10.0` (clamped) on the first Euler step and `0.0` on the last -- a fresh leftover acts at full
+  strength where the sample is still noise, and the final step is unguided whatever it is.
+- **What it does not check is stated in the report itself.** The statistics are synthetic
+  (`stats: synthetic`), so a wrong *statistic* would still pass; re-running the nine identities
+  against `HuggingFaceVLA/smolvla_libero`'s own postprocessor numbers is the first step once the
+  2 GB download lands, and before the first blocked episode.
+- **New:** 10 unit tests in `tests/unit/test_leftover_space.py` (CI-safe: no `lerobot`). `just
+  verify` green: ruff, ruff format, mypy strict, 141 unit + 1 smoke test, generated tables and
+  README byte-identical. No rows, no GPU time.
+
+## 2026-11-01: V4 attempted on this host, and the LIBERO wall is the platform rather than the install
+
+- **Attempted, not estimated.** V4's dependency cost was the last unmeasured cell in `docs/11`
+  section 6, so the environment was tried in an isolated env (`.venv-libero`, py3.12, uv, Windows
+  11). No policy ran and no row was written; the deliverable is an install-and-render matrix.
+- **The parts expected to fail are fine.** `transformers==5.5.4` installs within lerobot's
+  `>=5.4.0,<5.6.0`; `mujoco.Renderer` returns a shaded offscreen frame (max 201, mean 33.8) with no
+  EGL configured; and `robosuite==1.5.2 + mujoco==3.3.7` yields a real
+  `agentview_image (128,128,3) uint8 max=255` from a camera-observation `Lift` env [V].
+- **The part expected to be easy is the wall.** LIBERO pins `robosuite==1.4.0`, whose
+  `binding_utils.py` loads a bundled `mujoco.dll` through `ctypes.WinDLL`; the sdist ships no Windows
+  DLL, so `import robosuite.environments` raises `FileNotFoundError` before an env exists [V].
+- **`egl-probe` is what blocks the installers.** `robomimic==0.3.0` and `libero==0.1.1` both depend on
+  it, and it builds with `cmake ..; make -j`, which exits non-zero here [V]. `libero --no-deps`
+  installs, and LIBERO's source never references `MUJOCO_GL` or `egl` [V, grep]: the EGL requirement
+  is metadata, not code.
+- **LIBERO gets surprisingly far.** Its wheel ships `bddl_files` and `init_files`, so no dataset
+  download is needed; `libero_spatial` loads 10 tasks and task 0's bddl path resolves [V]. It then
+  dies on one import: `robosuite.environments.manipulation.single_arm_env`, a module 1.5.2 *removed*
+  rather than renamed (`manipulation_env.py` defines `ManipulationEnv(RobotEnv)`), while
+  `BDDLBaseDomain(SingleArmEnv)` is LIBERO's entire env layer [V]. `lerobot.envs.libero` imports
+  `OffScreenRenderEnv` at module scope, so this repo's wrapper fails at the same line [V]. The first
+  import also prompts with `input()` when `~/.libero/config.yaml` is absent, which is an `EOFError`
+  for anything unattended [V].
+- **Consequence:** V4 cannot be pinned on Windows without owning third-party environment code, so it
+  becomes a platform decision (Linux or a rented box) rather than a scoping step. `docs/11` section
+  4.4 carries the matrix, section 6's V4 row is now measured, and V3's row says it is gated on that
+  decision. `.venv-libero/` and `tmp_libero/` are gitignored scratch; no code, no rows, no GPU time.

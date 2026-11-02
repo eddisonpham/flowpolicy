@@ -127,7 +127,11 @@ Two further obstructions, verified rather than inferred:
   needs the leftover prefix, `inference_delay`, and a gradient enabled inside it. Our three
   `predict_chunk` implementations are closed samplers under `@torch.no_grad()` that expose no
   per-step velocity hook (and on the fast-sampler path the loop is a captured CUDA graph, E14).
-  So even on a flow checkpoint, RTC needs its own sampler, not this `predict_chunk`.
+  So even on a flow checkpoint, RTC needs its own sampler, not this `predict_chunk`. That is a
+  statement about *our* adapters driving *our* samplers, not about upstream flow policies: SmolVLA's
+  own `predict_action_chunk` takes `prev_chunk_left_over` / `inference_delay` / `execution_horizon`
+  as call arguments, so on a policy whose loop upstream owns, RTC rides the same interface this
+  repo's `PolicyLike` already is (`docs/11` section 4.4).
 - **The only flow checkpoints on this host are the retired ablation models.**
   `checkpoints/e1_flow_s0..s2` are the from-scratch flow policies D11 took out of the measured
   stack at 4-7 % success, and there is no published flow-matching checkpoint for PushT. RTC on
