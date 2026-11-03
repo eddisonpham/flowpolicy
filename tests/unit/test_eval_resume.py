@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from policybench.eval.rollout import CHUNKS_PER_WORKER, _chunks, completed_seeds
+from policybench.eval.rollout import CHUNKS_PER_WORKER, _chunks, _shards, completed_seeds
 
 pytestmark = pytest.mark.unit
 
@@ -59,3 +59,38 @@ def test_completed_seeds_reads_only_matching_config(tmp_path: Path) -> None:
 
 def test_missing_partial_means_nothing_completed(tmp_path: Path) -> None:
     assert completed_seeds(tmp_path / "absent.partial", "mine") == set()
+
+
+def test_completed_seeds_reads_every_worker_shard(tmp_path: Path) -> None:
+    # One writer per shard is what makes a block durable without interleaving: four workers
+    # appending to one file produced fragments that broke the assembly of a finished block
+    # (2026-11-03, E3 under `just pipeline`).
+    partial = tmp_path / "out.jsonl.partial"
+    partial.write_text("", encoding="utf-8")
+    for shard, seed in (("out.jsonl.partial.0", 1), ("out.jsonl.partial.3", 2)):
+        (tmp_path / shard).write_text(
+            json.dumps({"eval_seed": seed, "config_id": "mine"}) + "\n", encoding="utf-8"
+        )
+    assert completed_seeds(partial, "mine") == {1, 2}
+
+
+def test_a_torn_line_costs_its_seed_not_the_block(tmp_path: Path) -> None:
+    # A killed worker leaves at most one torn line per shard. That seed is not complete, so it is
+    # re-run; every other row in the block is still readable.
+    partial = tmp_path / "out.jsonl.partial.0"
+    partial.write_text(
+        json.dumps({"eval_seed": 1, "config_id": "mine"}) + "\n{\"eval_seed\": 2, \"conf\n",
+        encoding="utf-8",
+    )
+    assert completed_seeds(partial, "mine") == {1}
+
+
+def test_shards_are_the_bare_partial_plus_its_worker_files(tmp_path: Path) -> None:
+    partial = tmp_path / "out.jsonl.partial"
+    partial.touch()
+    (tmp_path / "out.jsonl.partial.10").touch()
+    (tmp_path / "other.jsonl.partial.0").touch()
+    assert [path.name for path in _shards(partial)] == [
+        "out.jsonl.partial",
+        "out.jsonl.partial.10",
+    ]

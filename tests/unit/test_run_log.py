@@ -129,3 +129,38 @@ def test_the_default_log_path_is_a_slugged_file_in_the_ignored_log_dir() -> None
     assert path.suffix == ".jsonl"
     assert "/" not in path.name
     assert "!!" not in path.name
+
+
+def test_the_reader_states_episodes_rate_and_the_failure(tmp_path) -> None:
+    # `just logs` is the screen a long run is supervised from, so what it states is the point.
+    from scripts.logs import summarize
+
+    path = tmp_path / "run.jsonl"
+    with RunLog(path, run_id="cfg", echo=False) as log:
+        log.event("run_start", episodes=2)
+        log.event("episode_done", eval_seed=1, success=1.0, wall_s=5.0)
+        log.event("episode_done", eval_seed=2, success=0.0, wall_s=7.0)
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError as exc:
+            log.error(exc, stage="episode", eval_seed=3)
+
+    text = summarize(path, errors_only=False, tail=2)
+    assert "episodes: 2" in text
+    assert "50.0%" in text
+    assert "RuntimeError: boom" in text
+
+
+def test_errors_only_omits_the_progress_lines(tmp_path) -> None:
+    from scripts.logs import summarize
+
+    path = tmp_path / "run.jsonl"
+    with RunLog(path, run_id="cfg") as log:
+        log.progress("chunk_done", done=1, total=8)
+        log.event("episode_done", eval_seed=1, success=1.0, wall_s=5.0)
+    text = summarize(path, errors_only=True, tail=5)
+    # The counts line still names every event type; what `--errors` drops is the progress dump
+    # and the per-episode summary, not the inventory of what is in the file.
+    assert "progress:" not in text
+    assert "episodes: 1" not in text
+    assert "errors: none" in text

@@ -11,7 +11,7 @@ import json
 import multiprocessing as mp
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import spawn as mp_spawn
 from pathlib import Path
@@ -337,9 +337,12 @@ def _run_episodes(seeds: list[int], out_path: str, log_path: str, config_id: str
     The worker writes the row rather than returning it. A chunk that raised on its 12th of 25
     episodes used to lose all 25, because the parent only ever saw `future.result()`; now the
     block keeps everything that completed, and the failure is logged by the process that saw it.
-    Concurrent appends are one line per write against a file opened in append mode, and the
-    parent re-reads and sorts the file at the end, so row order does not depend on which worker
-    got there first.
+
+    `out_path` is this worker's **own** shard, not a shared file. Appends from several processes
+    to one file are not atomic for a ~600-byte line: four workers at E3 N=1 produced interleaved
+    fragments, and the assembly step then died on `json.loads` at the end of a completed block
+    (2026-11-03, found by `just pipeline`). One writer per shard removes the question, and the
+    parent merges and sorts the shards at the end.
     """
     log = RunLog(Path(log_path), run_id=config_id, echo=False)
     written = 0
@@ -453,18 +456,36 @@ def _chunks(seeds: list[int], workers: int, per_worker: int = CHUNKS_PER_WORKER)
     return [chunk for chunk in (seeds[i::n_chunks] for i in range(n_chunks)) if chunk]
 
 
-def completed_seeds(partial: Path, config_id: str) -> set[int]:
-    """Seeds already written to `partial` under this `config_id` (resume support)."""
-    if not partial.exists():
-        return set()
-    done: set[int] = set()
-    for line in partial.read_text(encoding="utf-8").splitlines():
+def _iter_rows(path: Path) -> Iterator[dict[str, Any]]:
+    """Rows from a JSONL file, skipping a line that does not decode.
+
+    A killed worker leaves at most one torn line per shard, and a torn line must not make a
+    finished block unreadable: the seed it belonged to is simply not complete, so it is re-run.
+    """
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
             continue
-        row = json.loads(line)
-        # A `.partial` from a different run must not be spliced into this one.
-        if row.get("config_id") == config_id and "eval_seed" in row:
-            done.add(int(row["eval_seed"]))
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+
+def _shards(partial: Path) -> list[Path]:
+    """The block's per-worker files: the bare `.partial` plus `.partial.<worker>`."""
+    return [partial, *sorted(partial.parent.glob(partial.name + ".*"))]
+
+
+def completed_seeds(partial: Path, config_id: str) -> set[int]:
+    """Seeds already written under this `config_id`, across every shard (resume support)."""
+    done: set[int] = set()
+    for path in _shards(partial):
+        for row in _iter_rows(path):
+            # A `.partial` from a different run must not be spliced into this one.
+            if row.get("config_id") == config_id and "eval_seed" in row:
+                done.add(int(row["eval_seed"]))
     return done
 
 
@@ -549,10 +570,12 @@ def evaluate(
     )
     if done:
         log.progress("resume", partial=str(partial), completed=len(done), of=len(eval_seeds))
-    # A partial file belongs to one `config_id`: starting a fresh block truncates it, resuming
-    # keeps it. Workers append to it directly, so it has to exist before the first submit.
+    # The `.partial` files belong to one `config_id`: starting a fresh block deletes them,
+    # resuming keeps them. Each worker appends to its own shard, so the bare file is only a
+    # marker that the block started.
     if not done:
-        partial.unlink(missing_ok=True)
+        for stale in _shards(partial):
+            stale.unlink(missing_ok=True)
     partial.touch()
     progress = Progress(total=len(todo))
     chunks = _chunks(todo, workers)
@@ -572,8 +595,8 @@ def evaluate(
             normalization,
             instruction,
         )
-        for chunk in chunks:
-            _run_episodes(chunk, str(partial), str(log.path), config_id)
+        for index, chunk in enumerate(chunks):
+            _run_episodes(chunk, f"{partial}.{index}", str(log.path), config_id)
             log.progress("chunk_done", **progress.advance(len(chunk)))
     elif todo:
         try:
@@ -595,8 +618,10 @@ def evaluate(
                 ),
             ) as pool:
                 futures = [
-                    pool.submit(_run_episodes, chunk, str(partial), str(log.path), config_id)
-                    for chunk in chunks
+                    pool.submit(
+                        _run_episodes, chunk, f"{partial}.{index}", str(log.path), config_id
+                    )
+                    for index, chunk in enumerate(chunks)
                 ]
                 for future in as_completed(futures):
                     log.progress("chunk_done", **progress.advance(future.result()))
@@ -612,22 +637,17 @@ def evaluate(
     # appending them here would splice a foreign block into this one -- a half-finished run from a
     # different `config_id` is exactly what the `.partial` file is supposed to keep out.
     requested = set(eval_seeds)
-    rows: list[dict[str, Any]] = sorted(
-        (
-            row
-            for row in (
-                json.loads(line)
-                for line in partial.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            )
-            if row.get("config_id") == config_id and int(row["eval_seed"]) in requested
-        ),
-        key=lambda row: (int(row["eval_seed"]), int(row.get("noise_seed", 0))),
-    )
+    merged: dict[tuple[int, int], dict[str, Any]] = {}
+    for path in _shards(partial):
+        for row in _iter_rows(path):
+            if row.get("config_id") == config_id and int(row["eval_seed"]) in requested:
+                merged.setdefault((int(row["eval_seed"]), int(row.get("noise_seed", 0))), row)
+    rows = [merged[key] for key in sorted(merged)]
     with out.open("a", encoding="utf-8", newline="\n") as fh:
         for row in rows:
             fh.write(json.dumps(row) + "\n")
-    partial.unlink()
+    for path in _shards(partial):
+        path.unlink(missing_ok=True)
     successes = sum(1 for row in rows if row["success"])
     log.progress(
         "run_end",
