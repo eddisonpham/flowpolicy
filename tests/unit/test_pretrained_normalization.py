@@ -68,3 +68,49 @@ def test_normalize_state_is_not_in_place() -> None:
     before = state.clone()
     normalize_state(state, low, high)
     assert pytest.approx(0.0) == (state - before).abs().max().item()
+
+
+@pytest.mark.gpu
+def test_the_normalization_tracks_the_device() -> None:
+    """The `BuffersNorm` statistics must be the tensors the module moved to the GPU.
+
+    `Module.to` **rebinds** each buffer rather than moving it in place, so building the norm
+    object before the device move leaves it holding the CPU copies -- and then every chunk
+    raises "Expected all tensors to be on the same device, but found at least two devices, cuda:0
+    and cpu" inside `normalize_image`. That was the state of the tree from the option-H
+    normalization change until 2026-11-03, when the pipeline's first GPU run hit it: 40 CPU tests
+    covered the arithmetic and none of them could see a stale reference, because a CPU-only move
+    rebinds nothing.
+
+    Needs the checkpoint and a CUDA device, so it is marked `gpu` and never runs in CI. It is
+    the only test that can fail this way, which is why it exists.
+    """
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA device")
+    pytest.importorskip("lerobot")
+
+    from policybench.models.pretrained import PretrainedDiffusionPolicy
+
+    policy = PretrainedDiffusionPolicy("lerobot/diffusion_pusht", device="cuda")
+    norm = policy._norm
+    cuda = torch.device("cuda:0")
+    # `BuffersNorm` holds the same tensors the module registered, after the move. Compared by
+    # `is_cuda` and pointer rather than by device equality: `torch.device("cuda")` has no index
+    # and never equals `cuda:0`, which is a false failure in the test rather than in the code.
+    assert norm.image_mean.is_cuda
+    assert norm.image_mean.data_ptr() == policy.image_mean.data_ptr()
+    assert norm.action_high.is_cuda
+    assert policy.image_mean.device == cuda
+
+    obs = {
+        "image": torch.rand(1, policy.obs_horizon, 3, 96, 96, device=cuda),
+        "state": torch.rand(1, policy.obs_horizon, 2, device=cuda) * 300.0,
+    }
+    chunk = policy.predict_chunk(obs, steps=2)
+    assert chunk.shape[0] == 1
+    assert torch.isfinite(chunk).all()
+    # Clamped into environment pixels, which they can only be if de-normalization ran.
+    assert float(chunk.min()) >= 0.0
+    assert float(chunk.max()) <= 512.0
+    del policy
+    torch.cuda.empty_cache()

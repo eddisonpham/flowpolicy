@@ -202,6 +202,18 @@ class PretrainedDiffusionPolicy(nn.Module):
         self.register_buffer("action_low", stats["action_low"].float())
         self.register_buffer("action_high", stats["action_high"].float())
 
+        # Move to the device *before* building the normalization object below. `Module.to`
+        # **rebinds** each buffer rather than moving it in place, so a `BuffersNorm` built from
+        # `self.image_mean` beforehand keeps pointing at the CPU tensor and every chunk then
+        # raises "found at least two devices, cuda:0 and cpu". Found on 2026-11-03 by the first
+        # GPU run of `just pipeline`; no CPU test can see it, which is why the ordering is
+        # pinned by tests/unit/test_pretrained_normalization.py::test_the_norm_tracks_the_device.
+        #
+        # `self.to` rather than `self.policy.to`: the normalization buffers are this module's,
+        # and they have to travel with the network. Device only -- the statistics stay fp32 so
+        # half precision does not also move the input/output scaling.
+        self.to(device)
+
         # The one object `predict_chunk` talks to for units. Both implementations satisfy the
         # same protocol, so the sampler below cannot tell which is in use (docs/10 section 4.1).
         self.normalization = normalization
@@ -221,12 +233,6 @@ class PretrainedDiffusionPolicy(nn.Module):
             raise ValueError(
                 f"unknown normalization {normalization!r}; choose 'buffers' or 'processors'"
             )
-
-        # `self.to` rather than `self.policy.to`: the normalization buffers are this
-        # module's, and they have to travel with the network. Device only -- the
-        # normalization statistics stay fp32 so half precision does not also move the
-        # input/output scaling.
-        self.to(device)
         if self.torch_dtype != torch.float32:
             self.policy.to(dtype=self.torch_dtype)
             # The sinusoidal timestep embedding constructs its own fp32 tensor

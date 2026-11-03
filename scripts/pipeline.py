@@ -1,0 +1,554 @@
+"""Run the benchmark pipeline end to end: probes, eval blocks, deploy rows, generated tables.
+
+`just verify` proves the *tree* is self-consistent. It does not run a policy. This runs the
+measurement stack the way `docs/04` describes it and writes each stage's log under
+`results/logs/pipeline_<stamp>/`, so a 50-minute run can be supervised rather than waited on.
+
+Two decisions worth stating:
+
+**Rows go to the run directory, not to `results/*.jsonl`.** The committed rows are evidence; a
+re-run has to be able to disagree with them without overwriting them. `--compare` (run at the end
+of every profile) pairs the fresh rows with the committed ones by seed and reports how far the
+pipeline reproduces itself. That is the only claim this script makes: a difference between fresh
+and committed rows is a reproducibility finding about the harness, and `summary.json` records it
+rather than a rerun quietly replacing the evidence.
+
+**Stages fail independently.** A failed stage does not stop the pipeline (unless it is
+`--fail-fast`), because the point of a single long run is to see *everything* that is broken in one
+pass, and the exit code still reports failure. `summary.json` is written after every stage, so a
+killed run still says what it got through.
+
+Scope, stated rather than implied: this covers the pretrained and deployment path -- E0, E3, E9,
+E10, E15, plus the deterministic probes. Training (E1) is a multi-hour GPU job with its own recipe
+(`just train-e1`) and is not part of this.
+
+Usage:
+    just pipeline                     # full profile, ~50 min on the 5060
+    just pipeline quick               # smoke the whole path in ~5 min
+    uv run python scripts/pipeline.py --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from policybench.eval.report import read_rows
+from policybench.eval.stats import mcnemar_exact, p_text
+from policybench.logging import RunLog, default_log_path
+
+REPO = Path(__file__).resolve().parents[1]
+PY = sys.executable
+LEROYOT = REPO / ".venv-lerobot"
+CKPT = "hf:lerobot/diffusion_pusht"
+VQBET = "hf:lerobot/vqbet_pusht"
+
+#: Fresh rows ↔ committed rows, for the reproducibility comparison at the end of a run.
+#: A stage not listed here has no committed counterpart, so it is not compared.
+COMMITTED: dict[str, str] = {
+    "e0": "results/e0.jsonl",
+    "e0-published": "results/e0_published_seeds.jsonl",
+    "e3": "results/e3.jsonl",
+    "vqbet": "results/vqbet.jsonl",
+    "deploy": "results/deploy.jsonl",
+    "latency": "results/latency.jsonl",
+}
+
+
+@dataclass(frozen=True)
+class Stage:
+    """One named step: one or more commands, run in order, sharing one log file."""
+
+    name: str
+    description: str
+    commands: tuple[tuple[str, ...], ...]
+    minutes: float
+    gpu: bool = False
+    requires: Path | None = None
+
+
+@dataclass
+class StageResult:
+    name: str
+    status: str  # ok | failed | skipped
+    seconds: float
+    returncode: int = 0
+    detail: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "stage": self.name,
+            "status": self.status,
+            "seconds": round(self.seconds, 1),
+            "returncode": self.returncode,
+            "detail": self.detail,
+        }
+
+
+def lerobot_python() -> Path | None:
+    """The isolated interpreter that has `lerobot` (and may not exist on a fresh clone)."""
+    for candidate in (LEROYOT / "Scripts" / "python.exe", LEROYOT / "bin" / "python"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def build_stages(run: Path, profile: str) -> list[Stage]:
+    """The pipeline, as data. `run` is the directory fresh rows and logs go to."""
+    rows = run / "rows"
+    rows.mkdir(parents=True, exist_ok=True)
+    py = PY
+    episodes = 100 if profile == "full" else 10
+    vq_episodes = 200 if profile == "full" else 20
+
+    stages: list[Stage] = [
+        Stage(
+            "doctor",
+            "read-only environment check (versions, CUDA, backend, checkpoint)",
+            ((py, "scripts/doctor.py"),),
+            0.3,
+        ),
+        Stage(
+            "unit",
+            "CPU unit gate: the measurement code's own contracts",
+            ((py, "-m", "pytest", "-m", "unit and not gpu", "-q"),),
+            1.0,
+        ),
+        Stage(
+            "leftover",
+            "deterministic leftover round trip (VLA adapter gate, CPU)",
+            ((py, "scripts/smolvla_leftover_probe.py", "--out", str(run / "leftover.json")),),
+            0.2,
+        ),
+        Stage(
+            "processor-equiv",
+            "the checkpoint's own buffers vs lerobot's processor pipelines",
+            (
+                (
+                    str(lerobot_python() or "python"),
+                    "scripts/processor_equiv.py",
+                    "--checkpoint",
+                    "checkpoints/diffusion_pusht_migrated",
+                    "--out",
+                    str(run / "processor_equiv.json"),
+                ),
+            ),
+            0.5,
+            requires=LEROYOT,
+        ),
+        Stage(
+            "env-equiv",
+            "this repo's env wrapper vs lerobot's, fixed action sequence",
+            (
+                (
+                    str(lerobot_python() or "python"),
+                    "scripts/env_equiv.py",
+                    "--seed",
+                    "1000",
+                    "--steps",
+                    "300",
+                    "--out",
+                    str(run / "env_equiv.json"),
+                ),
+            ),
+            0.5,
+            requires=LEROYOT,
+        ),
+        Stage(
+            "e0",
+            f"E0: the published checkpoint, DDIM@10, {episodes} episodes on seeds 10000+",
+            (
+                (
+                    py,
+                    "scripts/evaluate.py",
+                    "--ckpt",
+                    CKPT,
+                    "--config-id",
+                    f"e0_ddim10_n{episodes}",
+                    "--episodes",
+                    str(episodes),
+                    "--seed-start",
+                    "10000",
+                    "--steps",
+                    "10",
+                    "--workers",
+                    "4",
+                    "--out",
+                    str(rows / "e0.jsonl"),
+                ),
+            ),
+            6.0 if profile == "full" else 0.7,
+            gpu=True,
+        ),
+    ]
+
+    if profile == "full":
+        stages += [
+            Stage(
+                "e0-published",
+                "E0 paired: the checkpoint on its own 200-episode block (seeds 1000+)",
+                (
+                    (
+                        py,
+                        "scripts/evaluate.py",
+                        "--ckpt",
+                        CKPT,
+                        "--config-id",
+                        "dp_published_n200",
+                        "--episodes",
+                        "200",
+                        "--seed-start",
+                        "1000",
+                        "--steps",
+                        "10",
+                        "--workers",
+                        "4",
+                        "--out",
+                        str(rows / "e0_published_seeds.jsonl"),
+                    ),
+                ),
+                12.0,
+                gpu=True,
+            ),
+            Stage(
+                "e3",
+                "E3: the DDIM step ladder, 6 x 50 episodes on seeds 20000+",
+                tuple(
+                    (
+                        py,
+                        "scripts/evaluate.py",
+                        "--ckpt",
+                        CKPT,
+                        "--config-id",
+                        f"e3_ddim_n{n}",
+                        "--episodes",
+                        "50",
+                        "--seed-start",
+                        "20000",
+                        "--steps",
+                        str(n),
+                        "--workers",
+                        "4",
+                        "--out",
+                        str(rows / "e3.jsonl"),
+                    )
+                    for n in (1, 2, 4, 8, 10, 16)
+                ),
+                10.0,
+                gpu=True,
+            ),
+            Stage(
+                "latency",
+                "E9: batch-1 chunk latency, eager and CUDA graph, at N=4 and N=10",
+                tuple(
+                    (
+                        py,
+                        "scripts/latency.py",
+                        "--ckpt",
+                        CKPT,
+                        "--mode",
+                        mode,
+                        "--steps",
+                        str(n),
+                        "--out",
+                        str(rows / "latency.jsonl"),
+                        "--config-id",
+                        f"e9_{mode}_n{n}",
+                    )
+                    for mode in ("eager", "cudagraph")
+                    for n in (4, 10)
+                ),
+                4.0,
+                gpu=True,
+            ),
+            Stage(
+                "deploy",
+                "E10: the fixed-rate control loop at 0/100/200 ms injected latency",
+                (
+                    (
+                        py,
+                        "scripts/deploy_eval.py",
+                        "--ckpts",
+                        CKPT,
+                        "--latencies",
+                        "0",
+                        "100",
+                        "200",
+                        "--seeds",
+                        "10000",
+                        "10001",
+                        "10002",
+                        "--episodes-per-seed",
+                        "5",
+                        "--steps",
+                        "10",
+                        "--strategy",
+                        "naive",
+                        "--out",
+                        str(rows / "deploy.jsonl"),
+                    ),
+                ),
+                24.0,
+                gpu=True,
+            ),
+        ]
+
+    stages += [
+        Stage(
+            "vqbet",
+            f"E15: a second published family through the same harness, {vq_episodes} episodes",
+            (
+                (
+                    py,
+                    "scripts/evaluate.py",
+                    "--ckpt",
+                    VQBET,
+                    "--config-id",
+                    f"vqbet_pusht_n{vq_episodes}",
+                    "--episodes",
+                    str(vq_episodes),
+                    "--seed-start",
+                    "100000",
+                    "--steps",
+                    "1",
+                    "--action-horizon",
+                    "5",
+                    "--workers",
+                    "1",
+                    "--out",
+                    str(rows / "vqbet.jsonl"),
+                ),
+            ),
+            1.5 if profile == "full" else 0.3,
+            gpu=True,
+        ),
+        Stage(
+            "tables",
+            "regenerate tables, README and the power audit; fail on any diff",
+            (
+                (py, "scripts/make_tables.py"),
+                (py, "scripts/make_readme.py"),
+                (py, "scripts/power_audit.py"),
+                (
+                    "git",
+                    "diff",
+                    "--exit-code",
+                    "--",
+                    "results/tables",
+                    "README.md",
+                    "results/power_audit.json",
+                ),
+            ),
+            1.0,
+        ),
+    ]
+    return stages
+
+
+def run_stage(stage: Stage, run: Path, log: RunLog) -> StageResult:
+    """Run every command in a stage into one log file, stopping at the first failure."""
+    if stage.requires is not None and not stage.requires.exists():
+        log.progress("stage_skipped", stage=stage.name, missing=str(stage.requires))
+        return StageResult(stage.name, "skipped", 0.0, detail=f"missing {stage.requires}")
+    started = time.perf_counter()
+    log_path = run / f"{stage.name}.log"
+    log.progress("stage_start", stage=stage.name, minutes=stage.minutes, log=str(log_path))
+    with log_path.open("w", encoding="utf-8", newline="\n") as fh:
+        for command in stage.commands:
+            fh.write("$ " + " ".join(command) + "\n")
+            fh.flush()
+            proc = subprocess.run(
+                command, cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, check=False
+            )
+            fh.write(f"[exit {proc.returncode}]\n")
+            fh.flush()
+            if proc.returncode != 0:
+                head = " ".join(command[:3])
+                return StageResult(
+                    stage.name,
+                    "failed",
+                    time.perf_counter() - started,
+                    returncode=proc.returncode,
+                    detail=f"`{head}` exited {proc.returncode}; see {log_path.name}",
+                )
+    return StageResult(stage.name, "ok", time.perf_counter() - started)
+
+
+def _key(row: dict[str, Any]) -> tuple[int, int, int, str]:
+    """How two rows are the same episode: seed, sampler steps, deploy episode, strategy."""
+    return (
+        int(row["eval_seed"]),
+        int(row.get("sampler_steps") or 0),
+        int(row.get("episode") or -1),
+        str(row.get("strategy") or ""),
+    )
+
+
+def compare_stage(fresh: Path, committed: Path) -> dict[str, Any]:
+    """Pair a fresh block with its committed counterpart and state the agreement.
+
+    Pairing is by `_key`, so a fresh block over a *subset* of the committed seeds (the quick
+    profile) compares on the seeds it actually ran rather than reporting a rate mismatch that is
+    only a different `n`.
+    """
+    new_rows = read_rows(fresh)
+    old_rows = read_rows(committed)
+    if not new_rows or not old_rows:
+        return {"stage": fresh.stem, "n": 0, "status": "not compared"}
+    old = {_key(row): row for row in old_rows}
+    shared = [(row, old[_key(row)]) for row in new_rows if _key(row) in old]
+    if not shared:
+        return {"stage": fresh.stem, "n": 0, "status": "no shared seeds"}
+    new_ok = sum(1 for a, _ in shared if a["success"])
+    old_ok = sum(1 for _, b in shared if b["success"])
+    only_new = sum(1 for a, b in shared if a["success"] and not b["success"])
+    only_old = sum(1 for a, b in shared if not a["success"] and b["success"])
+    p = mcnemar_exact(only_new, only_old)
+    return {
+        "stage": fresh.stem,
+        "n": len(shared),
+        "fresh_success": round(new_ok / len(shared), 4),
+        "committed_success": round(old_ok / len(shared), 4),
+        "agree": len(shared) - only_new - only_old,
+        "fresh_only": only_new,
+        "committed_only": only_old,
+        "p": round(p, 4),
+        "summary": f"{only_new}/{only_old} discordant, exact McNemar {p_text(p)}",
+    }
+
+
+def compare_all(run: Path) -> list[dict[str, Any]]:
+    rows = run / "rows"
+    return [
+        compare_stage(rows / Path(target).name, REPO / target)
+        for stage, target in COMMITTED.items()
+        if (rows / Path(target).name).exists()
+    ]
+
+
+def render(comparisons: list[dict[str, Any]]) -> str:
+    if not comparisons:
+        return "no fresh rows to compare"
+    lines = [
+        f"{'stage':<14}{'n':>5}{'fresh':>9}{'committed':>11}{'agree':>7}{'disc':>6}{'p':>9}",
+    ]
+    for c in comparisons:
+        if not c.get("n"):
+            lines.append(f"{c['stage']:<14}{'-':>5}  {c.get('status', '')}")
+            continue
+        disc = c["fresh_only"] + c["committed_only"]
+        lines.append(
+            f"{c['stage']:<14}{c['n']:>5}{c['fresh_success']:>9.1%}"
+            f"{c['committed_success']:>11.1%}{c['agree']:>7}{disc:>6}{c['p']:>9.3f}"
+        )
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", default="full", choices=["quick", "full"])
+    parser.add_argument("--out-dir", type=Path, default=None, help="fresh rows and stage logs")
+    parser.add_argument("--only", default="", help="comma-separated stage names")
+    parser.add_argument("--skip", default="", help="comma-separated stage names")
+    parser.add_argument("--dry-run", action="store_true", help="print the plan and exit")
+    parser.add_argument("--fail-fast", action="store_true", help="stop at the first failed stage")
+    args = parser.parse_args()
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run = args.out_dir or Path("results/logs") / f"pipeline_{args.profile}_{stamp}"
+    run.mkdir(parents=True, exist_ok=True)
+    stages = build_stages(run, args.profile)
+    if args.only:
+        wanted = {name.strip() for name in args.only.split(",") if name.strip()}
+        unknown = wanted - {stage.name for stage in stages}
+        if unknown:
+            parser.error(f"unknown stage(s): {sorted(unknown)}")
+        stages = [stage for stage in stages if stage.name in wanted]
+    if args.skip:
+        unwanted = {name.strip() for name in args.skip.split(",") if name.strip()}
+        stages = [stage for stage in stages if stage.name not in unwanted]
+    if not stages:
+        parser.error("no stages selected")
+
+    if args.dry_run:
+        for index, stage in enumerate(stages, 1):
+            print(f"{index}/{len(stages)} {stage.name:<18} ~{stage.minutes:5.1f} min")
+            print(f"    {stage.description}")
+            for command in stage.commands:
+                print("      $ " + " ".join(command))
+        print(f"\nrows and logs -> {run}")
+        return
+
+    log = RunLog(default_log_path(f"pipeline_{args.profile}"), run_id=f"pipeline_{args.profile}")
+    log.progress(
+        "pipeline_start",
+        profile=args.profile,
+        stages=len(stages),
+        planned_min=round(sum(stage.minutes for stage in stages), 1),
+        run_dir=str(run),
+        log=str(log.path),
+    )
+    results: list[StageResult] = []
+    started = time.perf_counter()
+    for index, stage in enumerate(stages, 1):
+        print(f"[{index}/{len(stages)}] {stage.name} (~{stage.minutes:.0f} min) ...", flush=True)
+        result = run_stage(stage, run, log)
+        results.append(result)
+        print(f"    {result.status} in {result.seconds / 60:.1f} min {result.detail}", flush=True)
+        _write_summary(
+            run, args.profile, results, comparisons=[], seconds=time.perf_counter() - started
+        )
+        if result.status == "failed" and args.fail_fast:
+            break
+
+    comparisons = compare_all(run)
+    _write_summary(
+        run, args.profile, results, comparisons=comparisons, seconds=time.perf_counter() - started
+    )
+    print("\n" + render(comparisons))
+    for row in results:
+        log.event("stage_result", **row.as_dict())
+    failed = [row.name for row in results if row.status == "failed"]
+    log.progress(
+        "pipeline_end",
+        ok=sum(1 for row in results if row.status == "ok"),
+        failed=len(failed),
+        skipped=sum(1 for row in results if row.status == "skipped"),
+        wall_min=round((time.perf_counter() - started) / 60, 1),
+        run_dir=str(run),
+    )
+    log.close()
+    print(f"\nrun dir: {run}")
+    print(f"run log: {log.path}")
+    if failed:
+        print(f"FAILED stages: {', '.join(failed)}")
+        raise SystemExit(1)
+
+
+def _write_summary(
+    run: Path,
+    profile: str,
+    results: list[StageResult],
+    *,
+    comparisons: list[dict[str, Any]],
+    seconds: float,
+) -> None:
+    payload = {
+        "profile": profile,
+        "generated": datetime.now(UTC).isoformat(timespec="seconds"),
+        "seconds": round(seconds, 1),
+        "stages": [row.as_dict() for row in results],
+        "reproducibility": comparisons,
+    }
+    (run / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

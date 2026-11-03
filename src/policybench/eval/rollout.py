@@ -13,6 +13,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import spawn as mp_spawn
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from policybench.data.normalizer import Stats
 from policybench.envs.base import EnvLike
 from policybench.envs.pusht import MAX_STEPS, PushTEnv
 from policybench.eval.metrics import assert_seed_disjoint
+from policybench.logging import Progress, RunLog, default_log_path
 from policybench.models.normalization import config_id_marks_path
 from policybench.models.observation import (
     DEFAULT_CAMERA,
@@ -252,7 +254,7 @@ def rollout_episode(
 _WORKER: dict[str, Any] = {}
 
 
-def _init_worker(
+def _load_worker(
     checkpoint: str,
     device: str,
     sampler_steps: int,
@@ -264,7 +266,6 @@ def _init_worker(
     normalization: str,
     instruction: str,
 ) -> None:
-    torch.set_num_threads(1)
     policy, meta = load_policy(
         checkpoint,
         device=device,
@@ -284,28 +285,111 @@ def _init_worker(
     )
 
 
-def _run_episodes(seeds: list[int]) -> list[dict[str, Any]]:
-    out = []
-    for seed in seeds:
-        offset = int(_WORKER["noise_offset"])
-        result = rollout_episode(
-            _WORKER["policy"],
-            seed,
-            sampler_steps=_WORKER["steps"],
-            action_horizon=_WORKER["horizon"],
-            device=_WORKER["device"],
-            noise_seed_offset=offset,
-            instruction=_WORKER["instruction"],
+def _init_worker(
+    checkpoint: str,
+    device: str,
+    sampler_steps: int,
+    action_horizon: int,
+    scheduler: str,
+    sampler: str,
+    dtype: str,
+    noise_seed_offset: int,
+    normalization: str,
+    instruction: str,
+) -> None:
+    """Pool initializer: one BLAS thread per worker, then load the checkpoint once."""
+    # N workers on a laptop otherwise contend on the CPU half of the pipeline, which is what made
+    # four CUDA workers freeze the host (docs/04 section 4).
+    torch.set_num_threads(1)
+    _load_worker(
+        checkpoint,
+        device,
+        sampler_steps,
+        action_horizon,
+        scheduler,
+        sampler,
+        dtype,
+        noise_seed_offset,
+        normalization,
+        instruction,
+    )
+
+
+class RolloutError(RuntimeError):
+    """An episode raised, named by the seed that produced it.
+
+    The pool reports a worker crash as `BrokenProcessPool`, which says nothing about *which*
+    episode died -- and under `spawn` it does not even carry the worker's traceback to the parent.
+    A 200-episode block then has to be debugged from the log rather than from the seed.
+    """
+
+    def __init__(self, eval_seed: int, config_id: str, cause: BaseException) -> None:
+        super().__init__(
+            f"episode {eval_seed} of {config_id!r} failed: {type(cause).__name__}: {cause}"
         )
-        out.append(
-            {
-                "eval_seed": seed,
-                "noise_seed": int(seed) + offset,
-                **result,
-                **_WORKER["meta"],
-            }
-        )
-    return out
+        self.eval_seed = eval_seed
+        self.config_id = config_id
+
+
+def _run_episodes(seeds: list[int], out_path: str, log_path: str, config_id: str) -> int:
+    """Run one chunk, appending each row to `out_path` as it finishes.
+
+    The worker writes the row rather than returning it. A chunk that raised on its 12th of 25
+    episodes used to lose all 25, because the parent only ever saw `future.result()`; now the
+    block keeps everything that completed, and the failure is logged by the process that saw it.
+    Concurrent appends are one line per write against a file opened in append mode, and the
+    parent re-reads and sorts the file at the end, so row order does not depend on which worker
+    got there first.
+    """
+    log = RunLog(Path(log_path), run_id=config_id, echo=False)
+    written = 0
+    try:
+        with open(out_path, "a", encoding="utf-8", newline="\n") as fh:
+            for seed in seeds:
+                offset = int(_WORKER["noise_offset"])
+                started = time.perf_counter()
+                try:
+                    result = rollout_episode(
+                        _WORKER["policy"],
+                        seed,
+                        sampler_steps=_WORKER["steps"],
+                        action_horizon=_WORKER["horizon"],
+                        device=_WORKER["device"],
+                        noise_seed_offset=offset,
+                        instruction=_WORKER["instruction"],
+                    )
+                except Exception as exc:
+                    log.error(exc, stage="episode", eval_seed=seed, config_id=config_id)
+                    raise RolloutError(seed, config_id, exc) from exc
+                row: dict[str, Any] = {
+                    "eval_seed": seed,
+                    "noise_seed": int(seed) + offset,
+                    **result,
+                    **_WORKER["meta"],
+                }
+                _stamp(
+                    row,
+                    config_id=config_id,
+                    sampler_steps=int(_WORKER["steps"]),
+                    action_horizon=int(_WORKER["horizon"]),
+                    noise_seed_offset=offset,
+                    instruction=str(_WORKER["instruction"]),
+                )
+                fh.write(json.dumps(row) + "\n")
+                fh.flush()
+                written += 1
+                log.event(
+                    "episode_done",
+                    eval_seed=seed,
+                    success=row["success"],
+                    coverage=round(float(row["coverage"]), 4),
+                    steps=int(row["steps"]),
+                    wall_s=round(float(row["wall_s"]), 2),
+                    secs=round(time.perf_counter() - started, 2),
+                )
+    finally:
+        log.close()
+    return written
 
 
 def _stamp(
@@ -335,6 +419,23 @@ def _stamp(
     # existed has no instruction, and an empty string is that absence, not a measurement.
     if instruction:
         row["instruction"] = instruction
+
+
+def _can_spawn() -> bool:
+    """Whether `spawn` can start a worker from this caller.
+
+    Rather than guessing from `__main__`, ask `spawn` what it would do: `get_preparation_data`
+    reports an `init_main_from_path` only when there is a main file to re-import, and a path that
+    is not on disk (`<stdin>`, `<string>`, a deleted script) is exactly the case that dies as
+    `BrokenProcessPool` after the first submit. `python -` / `python -c` also fail this by raising
+    inside `get_preparation_data` itself, which is why the probe is guarded.
+    """
+    try:
+        data = mp_spawn.get_preparation_data("policybench-probe")
+    except (AttributeError, RuntimeError):
+        return False
+    main_path = data.get("init_main_from_path")
+    return not (isinstance(main_path, str) and not Path(main_path).is_file())
 
 
 # Chunks per worker: the unit of "what a crash costs". One chunk per worker (the old shape) meant
@@ -385,6 +486,7 @@ def evaluate(
     noise_seed_offset: int = 0,
     normalization: str = "buffers",
     instruction: str = "",
+    log_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run `eval_seeds` and append one JSON line per episode to `out_path`.
 
@@ -392,11 +494,17 @@ def evaluate(
     environment seed alone, so two blocks over the same seeds differ only in the noise
     drawn. Default 0 reproduces every pre-existing result exactly.
 
-    Rows are flushed to `<out_path>.partial` as each chunk finishes and only appended to
-    `out_path` once every chunk is done. A multi-hour block therefore loses at most one chunk to
-    a crash, and a half-finished block cannot be read as a complete one: either the file is
-    whole or it does not exist. Re-running the same `config_id` resumes: seeds already in the
-    `.partial` are not re-run, and seeds from any other `config_id` are ignored.
+    Rows are written by the workers straight into `<out_path>.partial` as each episode finishes
+    and only appended to `out_path` once every chunk is done. A multi-hour block therefore loses
+    at most the episode that was running to a crash, and a half-finished block cannot be read as
+    a complete one: either the file is whole or it does not exist. Re-running the same
+    `config_id` resumes: seeds already in the `.partial` are not re-run, and seeds from any other
+    `config_id` are ignored.
+
+    `log_path` defaults to `results/logs/eval_<config_id>_<stamp>.jsonl`. It carries a
+    `run_start`, one `episode_done` per episode from the worker that ran it, `chunk_done` with
+    rate and ETA, and `error` with the seed and traceback when something raises -- which is the
+    difference between diagnosing a 200-episode block and re-running it.
     """
     assert_seed_disjoint(train_seeds, eval_seeds)
     # The row schema has no normalization field (docs/10 section 4.3), so a non-default path has
@@ -413,46 +521,91 @@ def evaluate(
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     partial = out.with_suffix(out.suffix + ".partial")
+    started = time.perf_counter()
+    log = RunLog(
+        default_log_path(f"eval_{config_id}") if log_path is None else log_path,
+        run_id=config_id,
+    )
     done = completed_seeds(partial, config_id) & set(eval_seeds)
     todo = [seed for seed in eval_seeds if seed not in done]
+    log.progress(
+        "run_start",
+        checkpoint=checkpoint,
+        episodes=len(eval_seeds),
+        todo=len(todo),
+        resumed=len(done),
+        workers=workers,
+        device=device,
+        sampler_steps=sampler_steps,
+        action_horizon=action_horizon,
+        scheduler=scheduler,
+        sampler=sampler,
+        dtype=dtype,
+        noise_seed_offset=int(noise_seed_offset),
+        normalization=normalization,
+        out=str(out),
+        log=str(log.path),
+        git=provenance()["git"],
+    )
     if done:
-        print(
-            f"resuming {config_id}: {len(done)}/{len(eval_seeds)} seeds already in {partial}, "
-            f"{len(todo)} to run"
+        log.progress("resume", partial=str(partial), completed=len(done), of=len(eval_seeds))
+    # A partial file belongs to one `config_id`: starting a fresh block truncates it, resuming
+    # keeps it. Workers append to it directly, so it has to exist before the first submit.
+    if not done:
+        partial.unlink(missing_ok=True)
+    partial.touch()
+    progress = Progress(total=len(todo))
+    chunks = _chunks(todo, workers)
+    if todo and not _can_spawn():
+        # Serial fallback: same rows, one worker. `spawn` cannot import a main module that is not
+        # on disk (REPL, notebook, `python -c`), and the failure it produced named `spawn_main`.
+        log.progress("spawn_unavailable", workers_requested=workers, workers_used=1)
+        _load_worker(
+            checkpoint,
+            device,
+            sampler_steps,
+            action_horizon,
+            scheduler,
+            sampler,
+            dtype,
+            int(noise_seed_offset),
+            normalization,
+            instruction,
         )
-    with (
-        ProcessPoolExecutor(
-            max_workers=workers,
-            mp_context=ctx,
-            initializer=_init_worker,
-            initargs=(
-                checkpoint,
-                device,
-                sampler_steps,
-                action_horizon,
-                scheduler,
-                sampler,
-                dtype,
-                int(noise_seed_offset),
-                normalization,
-                instruction,
-            ),
-        ) as pool,
-        partial.open("a" if done else "w", encoding="utf-8", newline="\n") as partial_fh,
-    ):
-        futures = [pool.submit(_run_episodes, chunk) for chunk in _chunks(todo, workers)]
-        for future in as_completed(futures):
-            for row in future.result():
-                _stamp(
-                    row,
-                    config_id=config_id,
-                    sampler_steps=sampler_steps,
-                    action_horizon=action_horizon,
-                    noise_seed_offset=int(noise_seed_offset),
-                    instruction=instruction,
-                )
-                partial_fh.write(json.dumps(row) + "\n")
-            partial_fh.flush()
+        for chunk in chunks:
+            _run_episodes(chunk, str(partial), str(log.path), config_id)
+            log.progress("chunk_done", **progress.advance(len(chunk)))
+    elif todo:
+        try:
+            with ProcessPoolExecutor(
+                max_workers=workers,
+                mp_context=ctx,
+                initializer=_init_worker,
+                initargs=(
+                    checkpoint,
+                    device,
+                    sampler_steps,
+                    action_horizon,
+                    scheduler,
+                    sampler,
+                    dtype,
+                    int(noise_seed_offset),
+                    normalization,
+                    instruction,
+                ),
+            ) as pool:
+                futures = [
+                    pool.submit(_run_episodes, chunk, str(partial), str(log.path), config_id)
+                    for chunk in chunks
+                ]
+                for future in as_completed(futures):
+                    log.progress("chunk_done", **progress.advance(future.result()))
+        except BaseException as exc:
+            # Log the state the block is in, then let the caller see the failure. Rows already in
+            # `.partial` are kept, so re-running the same `config_id` resumes instead of restarting.
+            log.error(exc, stage="block", completed=progress.done, of=progress.total)
+            log.close()
+            raise
     # Sorted before the append: chunks finish out of order now, and the block's row order should
     # not depend on which worker got there first. Filtered to this run's `config_id` and seeds:
     # `completed_seeds` already refuses another run's rows when deciding what to *run*, and
@@ -475,4 +628,13 @@ def evaluate(
         for row in rows:
             fh.write(json.dumps(row) + "\n")
     partial.unlink()
+    successes = sum(1 for row in rows if row["success"])
+    log.progress(
+        "run_end",
+        rows=len(rows),
+        success_rate=round(successes / len(rows), 4) if rows else 0.0,
+        wall_s=round(time.perf_counter() - started, 1),
+        out=str(out),
+    )
+    log.close()
     return rows

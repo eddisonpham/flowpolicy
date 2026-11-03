@@ -48,6 +48,19 @@ verify: test
 smoke:
     uv run pytest -m "smoke" -q
 
+# Run the benchmark pipeline end to end (docs/04): probe gates, then the eval blocks, the latency
+# ladder, the deploy rows, and the generated artifacts. Rows land in
+# results/logs/pipeline_<stamp>/rows/ rather than on top of the committed evidence, and the run
+# ends by pairing fresh rows with committed ones by seed -- a difference there is a finding about
+# the harness, not a replacement of the evidence. Logs: `just logs`.
+pipeline profile="full":
+    uv run python scripts/pipeline.py --profile {{profile}}
+
+# One screen of the newest run log: events, episodes, success rate, and any failure with its
+# traceback. Reads results/logs/; never writes a result.
+logs:
+    uv run python scripts/logs.py
+
 # Local-only: anything touching a GPU or a simulator.
 test-local:
     uv run pytest -m "integration or gpu or slow"
