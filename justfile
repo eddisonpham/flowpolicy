@@ -61,6 +61,16 @@ pipeline profile="full":
 logs:
     uv run python scripts/logs.py
 
+# One screen for a pipeline run directory: the stage table, the tail of every failed stage's log,
+# and the fresh-vs-committed comparison. Safe to run while the pipeline is going.
+pipeline-status run_dir:
+    uv run python scripts/logs.py --run-dir {{run_dir}}
+
+# Rebuild only the reproducibility block of a finished pipeline run, from the rows on disk. The
+# stages are the expensive part and the comparison is the part that can be wrong on its own.
+pipeline-compare run_dir:
+    uv run python scripts/pipeline.py --compare-only {{run_dir}}
+
 # Local-only: anything touching a GPU or a simulator.
 test-local:
     uv run pytest -m "integration or gpu or slow"

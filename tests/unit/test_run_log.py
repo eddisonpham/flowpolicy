@@ -164,3 +164,60 @@ def test_errors_only_omits_the_progress_lines(tmp_path) -> None:
     assert "progress:" not in text
     assert "episodes: 1" not in text
     assert "errors: none" in text
+
+
+def test_a_run_directory_reports_its_stages_and_the_failed_stages_log(tmp_path) -> None:
+    # `just pipeline-status <dir>`: the screen a pipeline run is supervised from. It has to work
+    # mid-run, so a stage that has not started is simply absent rather than an error.
+    from scripts.logs import summarize_run
+
+    run = tmp_path / "pipeline_full_stamp"
+    run.mkdir()
+    (run / "summary.json").write_text(
+        json.dumps(
+            {
+                "profile": "full",
+                "seconds": 600.0,
+                "stages": [
+                    {"stage": "e0", "status": "ok", "seconds": 686.3, "detail": ""},
+                    {
+                        "stage": "e3",
+                        "status": "failed",
+                        "seconds": 72.6,
+                        "detail": "`python scripts/evaluate.py --ckpt` exited 1",
+                    },
+                ],
+                "reproducibility": [
+                    {
+                        "stage": "e0",
+                        "n": 100,
+                        "fresh_success": 0.56,
+                        "committed_success": 0.64,
+                        "agree": 92,
+                        "fresh_only": 4,
+                        "committed_only": 4,
+                        "p": 0.74,
+                    },
+                    {"stage": "latency", "n": 0, "status": "not an episode block"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run / "e3.log").write_text(
+        "$ python scripts/evaluate.py --ckpt hf:x\njson.decoder.JSONDecodeError\n[exit 1]\n",
+        encoding="utf-8",
+    )
+
+    text = summarize_run(run)
+    assert "10.0 min" in text
+    assert "e0" in text and "e3" in text
+    assert "JSONDecodeError" in text  # the failed stage's own tail, not a guess
+    assert "56.0%" in text and "64.0%" in text
+    assert "not an episode block" in text
+
+
+def test_a_missing_summary_says_so_instead_of_reporting_zero_stages(tmp_path) -> None:
+    from scripts.logs import summarize_run
+
+    assert "missing" in summarize_run(tmp_path / "absent")

@@ -381,29 +381,112 @@ def run_stage(stage: Stage, run: Path, log: RunLog) -> StageResult:
     return StageResult(stage.name, "ok", time.perf_counter() - started)
 
 
-def _key(row: dict[str, Any]) -> tuple[int, int, int, str]:
-    """How two rows are the same episode: seed, sampler steps, deploy episode, strategy."""
-    return (
-        int(row["eval_seed"]),
-        int(row.get("sampler_steps") or 0),
-        int(row.get("episode") or -1),
-        str(row.get("strategy") or ""),
+def _opt_int(value: Any) -> int | None:
+    """A row field that may be absent or unusable, as `None` (unknown) rather than 0."""
+    if value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _opt_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+#: Conditions a block varies *within* one file, so they have to agree to be the same episode.
+CONDITIONS = ("steps", "latency")
+
+
+def _key(row: dict[str, Any]) -> dict[str, Any] | None:
+    """What makes two rows the same episode, plus the conditions that must agree.
+
+    ``seed``/``episode``/``strategy`` identify the episode; ``steps`` and ``latency`` are
+    conditions (E3's six N values, E10's latency levels), so pairing across them would compare
+    two different measurements.
+
+    A condition a row does not record is `None` -- unknown, not zero -- and `_same_episode`
+    treats it as a wildcard. Reading an absent `sampler_steps` as 0 is what turned a 45-episode
+    overlap into "no shared seeds" on 2026-11-03: `results/deploy.jsonl` predates the deploy
+    script recording that field. It cannot cause an E3 pairing across N, because those rows all
+    record their step count.
+
+    `None` (the whole key) is for a row that is not an episode at all: the E9 latency ladder
+    writes one row per (mode, N) benchmark, and pairing it by seed crashed the comparison of the
+    first full run with `KeyError: 'eval_seed'`, after all twelve stages had succeeded.
+    """
+    if "eval_seed" not in row or "success" not in row:
+        return None
+    return {
+        "seed": int(row["eval_seed"]),
+        "episode": int(row["episode"]) if row.get("episode") is not None else -1,
+        "strategy": str(row.get("strategy") or ""),
+        "steps": _opt_int(row.get("sampler_steps")),
+        "latency": _opt_float(row.get("latency_ms")),
+    }
+
+
+def _episode_id(key: dict[str, Any]) -> tuple[int, int, str]:
+    return (key["seed"], key["episode"], key["strategy"])
+
+
+def _same_episode(fresh: dict[str, Any], committed: dict[str, Any]) -> bool:
+    """Unknown conditions are wildcards; recorded ones must agree."""
+    return all(
+        fresh[name] is None or committed[name] is None or fresh[name] == committed[name]
+        for name in CONDITIONS
     )
+
+
+def _pair_rows(
+    new_rows: list[dict[str, Any]], old_rows: list[dict[str, Any]]
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Pair fresh rows with committed ones on the same episode under the same conditions."""
+    index: dict[tuple[int, int, str], list[dict[str, Any]]] = {}
+    for row in old_rows:
+        key = _key(row)
+        if key is not None:
+            index.setdefault(_episode_id(key), []).append(row)
+    used: set[int] = set()
+    shared: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for row in new_rows:
+        key = _key(row)
+        if key is None:
+            continue
+        for candidate in index.get(_episode_id(key), []):
+            if id(candidate) in used:
+                continue
+            other = _key(candidate)
+            if other is not None and _same_episode(key, other):
+                used.add(id(candidate))
+                shared.append((row, candidate))
+                break
+    return shared
 
 
 def compare_stage(fresh: Path, committed: Path) -> dict[str, Any]:
     """Pair a fresh block with its committed counterpart and state the agreement.
 
-    Pairing is by `_key`, so a fresh block over a *subset* of the committed seeds (the quick
-    profile) compares on the seeds it actually ran rather than reporting a rate mismatch that is
-    only a different `n`.
+    Pairing is by episode and condition, so a fresh block over a *subset* of the committed seeds
+    (the quick profile) compares on the seeds it actually ran rather than reporting a rate
+    mismatch that is only a different `n`.
     """
-    new_rows = read_rows(fresh)
-    old_rows = read_rows(committed)
-    if not new_rows or not old_rows:
+    raw_new = read_rows(fresh)
+    raw_old = read_rows(committed)
+    if not raw_new or not raw_old:
         return {"stage": fresh.stem, "n": 0, "status": "not compared"}
-    old = {_key(row): row for row in old_rows}
-    shared = [(row, old[_key(row)]) for row in new_rows if _key(row) in old]
+    new_rows = [row for row in raw_new if _key(row) is not None]
+    old_rows = [row for row in raw_old if _key(row) is not None]
+    if not new_rows or not old_rows:
+        return {"stage": fresh.stem, "n": 0, "status": "not an episode block"}
+    shared = _pair_rows(new_rows, old_rows)
     if not shared:
         return {"stage": fresh.stem, "n": 0, "status": "no shared seeds"}
     new_ok = sum(1 for a, _ in shared if a["success"])
@@ -459,7 +542,20 @@ def main() -> None:
     parser.add_argument("--skip", default="", help="comma-separated stage names")
     parser.add_argument("--dry-run", action="store_true", help="print the plan and exit")
     parser.add_argument("--fail-fast", action="store_true", help="stop at the first failed stage")
+    parser.add_argument(
+        "--compare-only",
+        type=Path,
+        default=None,
+        metavar="RUN_DIR",
+        help="skip every stage and only rebuild the reproducibility block of an existing run",
+    )
     args = parser.parse_args()
+
+    if args.compare_only is not None:
+        comparisons = compare_existing(args.compare_only)
+        print(render(comparisons))
+        print(f"\nrun dir: {args.compare_only}")
+        return
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run = args.out_dir or Path("results/logs") / f"pipeline_{args.profile}_{stamp}"
@@ -503,14 +599,22 @@ def main() -> None:
         results.append(result)
         print(f"    {result.status} in {result.seconds / 60:.1f} min {result.detail}", flush=True)
         _write_summary(
-            run, args.profile, results, comparisons=[], seconds=time.perf_counter() - started
+            run,
+            args.profile,
+            [row.as_dict() for row in results],
+            comparisons=[],
+            seconds=time.perf_counter() - started,
         )
         if result.status == "failed" and args.fail_fast:
             break
 
     comparisons = compare_all(run)
     _write_summary(
-        run, args.profile, results, comparisons=comparisons, seconds=time.perf_counter() - started
+        run,
+        args.profile,
+        [row.as_dict() for row in results],
+        comparisons=comparisons,
+        seconds=time.perf_counter() - started,
     )
     print("\n" + render(comparisons))
     for row in results:
@@ -535,7 +639,7 @@ def main() -> None:
 def _write_summary(
     run: Path,
     profile: str,
-    results: list[StageResult],
+    stages: list[dict[str, Any]],
     *,
     comparisons: list[dict[str, Any]],
     seconds: float,
@@ -544,10 +648,33 @@ def _write_summary(
         "profile": profile,
         "generated": datetime.now(UTC).isoformat(timespec="seconds"),
         "seconds": round(seconds, 1),
-        "stages": [row.as_dict() for row in results],
+        "stages": stages,
         "reproducibility": comparisons,
     }
     (run / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def compare_existing(run: Path) -> list[dict[str, Any]]:
+    """Re-run only the comparison for a finished run directory and rewrite its `summary.json`.
+
+    The stages are the expensive part and the comparison is the part that can be wrong on its own
+    (it crashed on 2026-11-03, after 49 minutes of green stages). Recomputing it from the rows on
+    disk is how that gets repaired without re-running a single episode: the stage records and
+    wall-clock come from the existing summary, the reproducibility block is replaced.
+    """
+    summary_path = run / "summary.json"
+    if not summary_path.exists():
+        raise SystemExit(f"{summary_path} not found -- --compare-only needs a finished run")
+    previous = json.loads(summary_path.read_text(encoding="utf-8"))
+    comparisons = compare_all(run)
+    _write_summary(
+        run,
+        str(previous.get("profile", "full")),
+        list(previous.get("stages") or []),
+        comparisons=comparisons,
+        seconds=float(previous.get("seconds") or 0.0),
+    )
+    return comparisons
 
 
 if __name__ == "__main__":

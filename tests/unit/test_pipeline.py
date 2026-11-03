@@ -14,7 +14,14 @@ import json
 from pathlib import Path
 
 import pytest
-from scripts.pipeline import REPO, build_stages, compare_stage, render
+from scripts.pipeline import (
+    REPO,
+    build_stages,
+    compare_all,
+    compare_existing,
+    compare_stage,
+    render,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -136,3 +143,113 @@ def test_the_rendered_table_states_n_and_discordance(tmp_path: Path) -> None:
     text = render([result])
     assert "stage" in text.splitlines()[0]
     assert "3" in text.splitlines()[1]
+
+
+def test_an_unrecorded_step_count_is_unknown_not_zero(tmp_path: Path) -> None:
+    # `results/deploy.jsonl` predates the deploy script recording `sampler_steps`. Treating that
+    # absence as 0 made every key miss and reported "no shared seeds" for a 45-episode overlap.
+    fresh = _rows([1, 2], [1, 0], steps=10)
+    old = [{"eval_seed": seed, "success": success} for seed, success in ((1, 1), (2, 0))]
+    result = compare_stage(
+        _write(tmp_path / "deploy.jsonl", fresh), _write(tmp_path / "old.jsonl", old)
+    )
+    assert result["n"] == 2
+    assert result["agree"] == 2
+
+
+def test_deploy_rows_are_not_paired_across_latency_levels(tmp_path: Path) -> None:
+    # E10 varies the injected latency within one file; a 0 ms episode and a 200 ms episode are
+    # different measurements, exactly like E3's N values.
+    fresh = [
+        {"eval_seed": 1, "latency_ms": 0.0, "success": 1},
+        {"eval_seed": 1, "latency_ms": 200.0, "success": 0},
+    ]
+    old = [{"eval_seed": 1, "latency_ms": 200.0, "success": 1}]
+    result = compare_stage(
+        _write(tmp_path / "deploy.jsonl", fresh), _write(tmp_path / "old.jsonl", old)
+    )
+    assert result["n"] == 1
+    assert result["fresh_only"] == 0
+    assert result["committed_only"] == 1  # the 200 ms episode failed fresh, succeeded committed
+
+
+def test_a_committed_row_is_not_paired_twice(tmp_path: Path) -> None:
+    fresh = [
+        {"eval_seed": 1, "episode": 0, "success": 1},
+        {"eval_seed": 1, "episode": 0, "success": 1},
+    ]
+    old = [{"eval_seed": 1, "episode": 0, "success": 0}]
+    result = compare_stage(
+        _write(tmp_path / "e0.jsonl", fresh), _write(tmp_path / "old.jsonl", old)
+    )
+    assert result["n"] == 1
+
+
+def test_a_non_episode_block_is_not_paired_by_seed(tmp_path: Path) -> None:
+    # The E9 latency ladder writes one row per (mode, N) benchmark: no seed and no success flag.
+    # Pairing it crashed the comparison of the first full pipeline run (2026-11-03, after all
+    # twelve stages were green): `KeyError: 'eval_seed'`.
+    fresh = [{"mode": "eager", "sampler_steps": 10, "mean_ms": 12.0}]
+    old = [{"mode": "eager", "sampler_steps": 10, "mean_ms": 12.5}]
+    result = compare_stage(
+        _write(tmp_path / "latency.jsonl", fresh), _write(tmp_path / "old.jsonl", old)
+    )
+    assert result["n"] == 0
+    assert result["status"] == "not an episode block"
+
+
+def test_compare_all_survives_a_block_that_is_not_episodes(tmp_path: Path, monkeypatch) -> None:
+    import scripts.pipeline as pipeline
+
+    run = tmp_path / "run"
+    (run / "rows").mkdir(parents=True)
+    _write(run / "rows" / "e0.jsonl", _rows([1, 2], [1, 0]))
+    _write(run / "rows" / "latency.jsonl", [{"mode": "eager", "mean_ms": 4.0}])
+    committed = tmp_path / "committed"
+    committed.mkdir()
+    monkeypatch.setattr(
+        pipeline,
+        "COMMITTED",
+        {
+            # `compare_all` pairs by the *committed* file's name, so the fresh row files have to
+            # share it (`rows/e0.jsonl` <-> `results/e0.jsonl`).
+            "e0": str(_write(committed / "e0.jsonl", _rows([1, 2], [1, 1]))),
+            "latency": str(_write(committed / "latency.jsonl", [{"mode": "eager"}])),
+        },
+    )
+
+    comparisons = {row["stage"]: row for row in compare_all(run)}
+    assert comparisons["e0"]["n"] == 2
+    assert comparisons["e0"]["agree"] == 1
+    assert comparisons["latency"]["n"] == 0
+
+
+def test_compare_existing_rebuilds_the_comparison_without_the_stages(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # 49 minutes of green stages were followed by a crashed comparison; recomputing it from the
+    # rows on disk is the repair, and it must not touch the stage records or the wall-clock.
+    import scripts.pipeline as pipeline
+
+    run = tmp_path / "run"
+    (run / "rows").mkdir(parents=True)
+    _write(run / "rows" / "e0.jsonl", _rows([1, 2], [1, 0]))
+    stages = [{"stage": "e0", "status": "ok", "seconds": 686.3, "returncode": 0, "detail": ""}]
+    (run / "summary.json").write_text(
+        json.dumps({"profile": "full", "seconds": 2934.0, "stages": stages, "reproducibility": []}),
+        encoding="utf-8",
+    )
+    committed = tmp_path / "committed"
+    committed.mkdir()
+    monkeypatch.setattr(
+        pipeline,
+        "COMMITTED",
+        {"e0": str(_write(committed / "e0.jsonl", _rows([1, 2], [1, 1])))},
+    )
+
+    compare_existing(run)
+    summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    assert summary["stages"] == stages
+    assert summary["seconds"] == 2934.0
+    assert summary["profile"] == "full"
+    assert summary["reproducibility"][0]["n"] == 2
