@@ -1,6 +1,6 @@
 # PolicyBench: operating rules for the coding agent
 
-Spec lives in `docs/` (start at `docs/07_roadmap.md`). Current state lives in `docs/STATE.md`. These rules override any urge to be helpful by doing more.
+Spec lives in `docs/` (start at `docs/07_roadmap.md`). Current state lives in `docs/STATE.md`. What is missing, and in what order to fix it, lives in `agents/`: `00_backlog.md` (gap inventory), `01`-`05` (one plan per step id, each with a kill criterion), `REVIEW.md` (the adversarial pass that cut and re-ordered them). These rules override any urge to be helpful by doing more.
 
 ## 0. Prime directives (non-negotiable)
 1. **NO GREEN FLAG, NO IMPLEMENTATION.** Never create/edit/delete project files, install packages, or run mutating commands unless the user's latest message contains `GO <step-id>` for the step you are executing. A hook also enforces this; never try to bypass it, never touch `.claude/`.

@@ -2,6 +2,49 @@
 
 Paths in entries below refer to where files lived on the date of the entry. The 2026-10-27 entry lists every move (from-scratch measurements now under `results/ablation/`). Exception: the 2026-10-28 rename entry below rewrote `flowpolicy` to `policybench` in the older entries, so their paths still resolve; the events they describe happened under the earlier name, and the uploaded brief is still `flowpolicy_complete/`.
 
+## 2026-11-02: Rows name their commit, the seeding has a test, and the server stops trusting `steps`
+
+`agents/05_ci_and_repro.md` (`C1`) and `agents/04_serving_hardening.md` (`S1`) as one batch: four
+guards and three serving edges. **No new measurement and no row touched** -- every number in
+`results/` is exactly what it was. `just verify` green, and it now diffs
+`results/power_audit.json` as well as the tables and the README.
+
+- **Every row carries `provenance: {git, lock_sha256}`.** Checkpoints have carried those two
+  stamps since M3 from a private copy in `training/trainer.py`; `src/policybench/provenance.py`
+  is now the one implementation both call, cached per process so a 200-episode block does not fork
+  `git` 200 times. Nested under a single key so no generator can read a hash as a measurement, and
+  the rows written before today have no key at all -- which reads as "unknown", the same
+  convention `step = -1` and `train_seed = -1` already use.
+- **The per-episode seeding is a test, not a comment.** `tests/unit/test_rollout_determinism.py`
+  runs one episode twice against a stub policy that draws its chunk from the global RNG: identical
+  traces when the seeding line is there, different ones when it is not. Confirmed by removing
+  `torch.manual_seed(noise_seed)` locally -- the first test fails -- and restoring it. A second
+  test asserts a *different* seed does draw different noise, so the first cannot pass on a policy
+  that ignores the RNG, and a third pins `noise_seed_offset` to the noise stream only, which is
+  the property the sound-stream block of 2026-10-30 depended on.
+- **The environment seam that test needed.** `envs/base.py` declares `EnvLike` (`reset(seed)`,
+  `step(action)`, `close()`, `fps`, `task_description`); `PushTEnv` gains the task string, and
+  `rollout_episode` gains `env_factory=PushTEnv`. Existing call sites are untouched on purpose --
+  swapping them is `agents/02`'s step, with its own golden test, because those files produced
+  every row here. The payoff today is that the determinism test runs in CI without a simulator.
+- **CI runs the adapter tests instead of skipping them.** The new `pretrained-contracts` job
+  installs `lerobot==0.6.1` the way `just setup-pretrained` does (`--no-deps`, on top of the
+  pinned torch) and re-runs the unit gate, where the checkpoint-contract tests report `passed`.
+  `transformers` is deliberately absent: one test asserts the config loads *without* it. **Not yet
+  observed on GitHub** -- the first green run is what closes that step, and the job is set to fail
+  loudly rather than carry `continue-on-error`, which would hide an install failure.
+- **`steps` is bounded, `deadline_ms` is a label, `shutdown()` drains.** A step count outside
+  `[1, max_steps]` -- the sampler's own schedule, 100 here, advertised by `/health` -- is a 400
+  naming the range instead of being trusted into the model, and a server constructed with a count
+  outside its own bound refuses to start. `deadline_ms` echoes `deadline_missed` from the measured
+  `latency_ms` and still returns the chunk: refusing a late one would make lateness unobservable
+  at the only point it matters. `shutdown()` stops accepting, waits for the requests already
+  inside the policy, then closes, which `ThreadingHTTPServer`'s daemon threads would otherwise
+  truncate on Ctrl-C.
+- **Still open.** `S1` step 4 -- a `LICENSE` and a version above `0.0.1` -- is the owner's call,
+  so the repository still has no licence. `L1`, `A1`'s adapter and `R1` remain blocked on a Linux
+  host; nothing in this batch moves them.
+
 ## 2026-11-02: Precondition 2's config half is checked without transformers, and it found the cadence
 
 The pilot's precondition 2 (`SmolVLAPolicy.from_pretrained`) has been `[NOT RUN]` everywhere this

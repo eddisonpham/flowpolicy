@@ -177,15 +177,19 @@ dependency this project does not need):
 
 ```
 GET  /health -> {"status": "ok", "policy": "pretrained-dp", "obs_horizon": 2,
-                 "pred_horizon": 16, "action_dim": 2, "steps": 10, "action_horizon": 8,
+                 "pred_horizon": 16, "action_dim": 2, "steps": 10, "max_steps": 100,
+                 "action_horizon": 8,
                  "cameras": ["image"], "instruction_required": false}
 POST /chunk  <- {"image": [[[[r, g, b], ...]]],   # [To, H, W, 3] uint8, 0-255
                  "state": [[x, y], ...],          # [To, 2] raw pixels
                  "cameras": {"image": ..., "wrist": ...},   # optional, instead of "image"
                  "instruction": "push the T into the goal",  # optional
-                 "steps": 10}                     # optional
+                 "steps": 10,                     # optional, in [1, max_steps]
+                 "deadline_ms": 250.0}            # optional; a label, never a refusal
              -> {"actions": [[x, y], ...],        # [action_horizon, 2] raw pixels
-                 "latency_ms": 183.4, "steps": 10}
+                 "latency_ms": 183.4, "steps": 10,
+                 "deadline_ms": 250.0,            # echoed only when the client sent one
+                 "deadline_missed": false}
 ```
 
 `cameras` and `instruction` are the observation contract from
@@ -212,6 +216,15 @@ plausible-looking actions:
 - Errors are HTTP 400 with `{"error": "<ExceptionType>: <message>"}`.
 - `latency_ms` is measured in-process around `predict_chunk`, with a `torch.cuda.synchronize()`
   on both sides, so it is comparable to the E9 protocol rather than to a network round trip.
+- `steps` is checked against the sampler's own schedule -- `max_steps`, 100 for this checkpoint,
+  advertised by `/health`. `steps: 0` is not a faster policy and `10**6` is not a better one:
+  both are 400s naming the range (2026-11-02).
+- `deadline_ms` is a *label*, not a refusal. The chunk comes back either way, with
+  `deadline_missed` computed from the measured `latency_ms`; a server that withheld a late chunk
+  would make lateness unobservable at the only point it matters.
+- `shutdown()` stops accepting, waits for the requests already inside the policy, then closes.
+  Ctrl-C is the documented way to stop `just serve`, and a client mid-inference keeps its answer
+  instead of seeing a reset connection (2026-11-02).
 
 Measured 2026-10-28 (`just bench-serve`, N=4, one process, `scripts/bench_serve.py` spawning
 the real `scripts/serve.py`):

@@ -44,12 +44,17 @@ everything below it knows nothing about experiments.
 | Seam | Contract | Implementations |
 |---|---|---|
 | `PolicyLike` (`models/policies.py`) | `obs_horizon`, `pred_horizon`, `action_dim`, `predict_chunk(obs, **kw)`, `num_parameters()`, `eval()`, `to()` | diffusion adapter, VQ-BeT adapter, three from-scratch policies |
-| `PushTEnv` (`envs/pusht.py`) | `reset(seed)`, `step(action)`, `{image, state}`, `{success, coverage}` | gym-pusht only (D1) |
-| JSONL rows (`results/`) | one dict per episode: seeds, success, coverage, latency, checkpoint provenance | written by runners, read by every generator |
+| `EnvLike` (`envs/base.py`) | `reset(seed)`, `step(action)`, `close()`, `fps`, `task_description`; `{image, state}` in, `{success, coverage}` out | `PushTEnv` (gym-pusht, D1); `rollout_episode(env_factory=...)` is the only injection point so far |
+| JSONL rows (`results/`) | one dict per episode: seeds, success, coverage, latency, `provenance {git, lock_sha256}` | written by runners, read by every generator |
 
 `load_policy` (`eval/rollout.py`) accepts a trained checkpoint path or `hf:<repo_id>`, and for
 an HF id reads `type` from the checkpoint's own `config.json` to choose an adapter. No caller
 passes a policy kind.
+
+The environment is a *type* now (`EnvLike`) rather than a name inside the loop: `rollout_episode`
+takes `env_factory`, defaulting to `PushTEnv`. That is what lets the determinism test run the real
+loop without the simulator, and what a second task would plug into -- the call sites themselves are
+deliberately unchanged, because they produced every row here.
 
 ## Layers
 

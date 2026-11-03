@@ -16,6 +16,13 @@ still get the non-negotiables.
 6. Small and finished beats large and half-done. Respect the fallbacks and kill criteria
    in `docs/06_decisions_and_risks.md`.
 
+## What to work on next
+
+`agents/README.md` holds the gap inventory and the ordered plans (`C1`, `L1`, `S1`, `A1`, `R1`),
+`agents/REVIEW.md` the review that cut and re-ordered them. A plan is **not** a permission: the
+`GO <step-id>` gate below still applies, one step at a time. `C1` and `S1` landed 2026-11-02; what
+remains (`L1`, `A1`, `R1`) is gated on a Linux host with a CUDA card.
+
 ## Workflow
 
 `/plan <step-id>` -> read the plan -> reply `GO <step-id>` and enable the green flag ->

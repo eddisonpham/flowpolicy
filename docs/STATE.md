@@ -2,12 +2,40 @@
 
 | Field | Value |
 |---|---|
-| Current milestone | M9 hardening (post-M8), 2026-10-28 |
-| Current step id | none (evals complete: E0, E3, E3-replication, E8, E9, E10, E12, E14, serving load, paced loop; rename to `policybench` complete) |
+| Current milestone | Post-M9 scaffolding: the `agents/` plan set, 2026-11-02 |
+| Current step id | `C1` and `S1` done; `L1`, `A1` and `R1` blocked on a Linux host with a CUDA card (`agents/README.md`) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
-| Last completed step | rename `flowpolicy` -> `policybench` (2026-10-28), after M9.7 |
-| Evidence | `just verify` green (2026-11-01: ruff, ruff format, mypy strict on 32 files, 141 CPU unit tests, 1 smoke test, generated tables/README byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/`; the leftover gate in `results/smolvla_leftover_probe.json` |
+| Last completed step | `C1` (CI contracts, determinism, provenance, resolution guard) + `S1` (serving edges), 2026-11-02 |
+| Evidence | `just verify` green (2026-11-02: ruff, ruff format, mypy strict on 34 files, 202 CPU unit tests, 1 smoke test, tables/README/`results/power_audit.json` byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/`; the leftover gate in `results/smolvla_leftover_probe.json` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
+
+## What changed on 2026-11-02 (C1 and S1 landed: guards around numbers already measured)
+
+`agents/05` (`C1`) and `agents/04` (`S1`) are implemented, plus `agents/02`'s step 1 (the
+`EnvLike` seam), which the determinism test needed to run without a simulator. **No new
+measurement and no row touched**: `results/` is byte-identical and every earlier number stands.
+
+- Rows carry `provenance: {git, lock_sha256}` from `src/policybench/provenance.py` -- one
+  implementation shared with `trainer.save`, cached per process so a 200-episode block does not
+  fork `git` 200 times, nested so no generator can read a hash as a measurement. Old rows have no
+  key, which reads as "unknown" rather than as a mismatch.
+- The per-episode seeding is falsifiable now: `tests/unit/test_rollout_determinism.py` runs an
+  episode twice against a stub policy that draws from the global RNG. Removing
+  `torch.manual_seed(noise_seed)` makes the first test fail (checked, then restored); a different
+  seed still draws different noise, and `noise_seed_offset` still moves the noise only.
+- `envs/base.py` declares `EnvLike`, `PushTEnv` gains `task_description`, and `rollout_episode`
+  gains `env_factory=PushTEnv`. Existing call sites are unchanged on purpose (that is `agents/02`).
+- CI gains `pretrained-contracts`: it installs `lerobot==0.6.1` with `--no-deps` on top of the
+  pinned torch, so the checkpoint-contract tests report `passed` instead of `skipped`. **Not yet
+  observed on GitHub** -- the first green run is the evidence, and the job fails rather than hides.
+- `just verify` regenerates `results/power_audit.json` and diffs it, so an uninformative null
+  cannot appear or change without the diff saying so.
+- The server bounds `steps` to the sampler's schedule (400 naming the range, `/health`
+  advertising it), echoes `deadline_missed` from the measured latency without withholding the
+  action, and drains in-flight requests on shutdown.
+- Tests 202 CPU unit (from 162), mypy on 34 files. **Still open:** `S1` step 4 (`LICENSE` and a
+  version above `0.0.1` -- the owner's call), and `L1`, `A1`'s adapter, `R1`, all three gated on a
+  Linux host with a CUDA card.
 
 ## What changed on 2026-11-02 (precondition 3 verified here; equiv preflight fixed)
 
