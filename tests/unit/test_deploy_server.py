@@ -11,6 +11,7 @@ from __future__ import annotations
 import http.client
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -255,3 +256,158 @@ def test_a_non_integer_content_length_is_a_400(served: Any) -> None:
     status, body = _raw_post(url, headers={"Content-Length": "not-a-number"})
     assert status == 400
     assert "Content-Length" in body["error"]
+
+
+# --- the three edges that are refused rather than trusted (docs/05 section 3) ---------------
+
+
+class SlowPolicy(StubPolicy):
+    """Sleeps inside `predict_chunk`: one request that a deadline can miss and a drain can await."""
+
+    def __init__(self, sleep_s: float = 0.15) -> None:
+        super().__init__()
+        self.sleep_s = sleep_s
+        self.started = threading.Event()
+
+    def predict_chunk(
+        self, obs: dict[str, Tensor], steps: int = 10, instruction: str = "", **kw: Any
+    ) -> Tensor:
+        self.started.set()
+        time.sleep(self.sleep_s)
+        return super().predict_chunk(obs, steps=steps, instruction=instruction, **kw)
+
+
+def _serve(policy: Any, **kwargs: Any) -> tuple[Any, threading.Thread]:
+    server = PolicyServer(("127.0.0.1", 0), policy, name="stub", device="cpu", **kwargs)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def test_health_advertises_the_step_bound(served: Any) -> None:
+    """A client that wants 10**6 steps should learn the bound from /health, not from a 400."""
+    url, _ = served
+    with urllib.request.urlopen(f"{url}/health", timeout=10) as response:
+        body = json.loads(response.read())
+    assert body["max_steps"] == 100
+    assert body["steps"] == 10
+
+
+def test_zero_steps_is_a_400_naming_the_bound(served: Any) -> None:
+    url, _ = served
+    status, body = _post(f"{url}/chunk", _payload(steps=0))
+    assert status == 400
+    assert "[1, 100]" in body["error"]
+
+
+def test_an_absurd_step_count_is_a_400_not_a_longer_run(served: Any) -> None:
+    url, _ = served
+    status, body = _post(f"{url}/chunk", _payload(steps=10**6))
+    assert status == 400
+    assert "[1, 100]" in body["error"]
+
+
+def test_a_non_integer_step_count_is_a_400(served: Any) -> None:
+    url, _ = served
+    payload = _payload()
+    payload["steps"] = "ten"
+    status, body = _post(f"{url}/chunk", payload)
+    assert status == 400
+    assert "integer" in body["error"]
+
+
+def test_the_bound_is_the_server_s_own_schedule() -> None:
+    """A flow policy with a longer schedule passes its own bound; the default is 100."""
+    policy = StubPolicy()
+    server, thread = _serve(policy, steps=4, max_steps=4)
+    try:
+        url = f"http://127.0.0.1:{server.port}"
+        status, body = _post(f"{url}/chunk", _payload(steps=5))
+        assert status == 400
+        assert "[1, 4]" in body["error"]
+        assert _post(f"{url}/chunk", _payload(steps=4))[0] == 200
+        assert policy.seen["steps"] == 4
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_a_constructor_step_count_outside_the_bound_is_refused() -> None:
+    """The bound is enforced at construction too, so `just serve ... 200` fails loudly."""
+    with pytest.raises(ValueError, match=r"\[1, 100\]"):
+        PolicyServer(("127.0.0.1", 0), StubPolicy(), device="cpu", steps=200)
+
+
+def test_a_met_deadline_is_echoed_as_met(served: Any) -> None:
+    url, _ = served
+    payload = _payload()
+    payload["deadline_ms"] = 10_000
+    status, body = _post(f"{url}/chunk", payload)
+    assert status == 200
+    assert body["deadline_ms"] == 10_000
+    assert body["deadline_missed"] is False
+
+
+def test_a_missed_deadline_flags_the_response_and_still_returns_actions() -> None:
+    """A label on the measurement, not a refusal: lateness has to stay observable."""
+    policy = SlowPolicy(sleep_s=0.1)
+    server, thread = _serve(policy)
+    try:
+        payload = _payload()
+        payload["deadline_ms"] = 1
+        status, body = _post(f"http://127.0.0.1:{server.port}/chunk", payload)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert status == 200
+    assert body["deadline_missed"] is True
+    assert body["latency_ms"] > 1.0
+    assert len(body["actions"]) == 8
+
+
+def test_no_deadline_means_no_deadline_fields(served: Any) -> None:
+    """A reply must not imply a deadline the request never carried."""
+    url, _ = served
+    status, body = _post(f"{url}/chunk", _payload())
+    assert status == 200
+    assert "deadline_missed" not in body
+    assert "deadline_ms" not in body
+
+
+def test_a_negative_deadline_is_a_400(served: Any) -> None:
+    url, _ = served
+    payload = _payload()
+    payload["deadline_ms"] = -5
+    status, body = _post(f"{url}/chunk", payload)
+    assert status == 400
+    assert "deadline_ms" in body["error"]
+
+
+def test_shutdown_waits_for_the_request_already_inside_the_policy() -> None:
+    """Ctrl-C during inference must not truncate the client's response."""
+    policy = SlowPolicy(sleep_s=0.4)
+    server, thread = _serve(policy)
+    url = f"http://127.0.0.1:{server.port}"
+    result: dict[str, Any] = {}
+
+    def call() -> None:
+        result["response"] = _post(f"{url}/chunk", _payload())
+
+    client = threading.Thread(target=call)
+    client.start()
+    assert policy.started.wait(timeout=5.0), "the request never reached the policy"
+
+    started = time.monotonic()
+    server.shutdown()
+    waited = time.monotonic() - started
+    client.join(timeout=5)
+    server.server_close()
+    thread.join(timeout=5)
+
+    status, body = result["response"]
+    assert status == 200, body
+    assert len(body["actions"]) == 8
+    # It waited for the in-flight work instead of returning immediately.
+    assert waited > 0.2, waited

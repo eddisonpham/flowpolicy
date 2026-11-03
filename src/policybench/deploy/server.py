@@ -17,9 +17,12 @@ Contract (documented in `docs/05` section 3):
                      "state": [[x, y], ...],          # [To, 2] raw pixels
                      "cameras": {"image": ..., "wrist": ...},   # optional, instead of "image"
                      "instruction": "<task string>",  # optional; required if the policy says so
-                     "steps": 10}                     # optional, default 10
+                     "steps": 10,                     # optional, default 10, in [1, max_steps]
+                     "deadline_ms": 250.0}            # optional; a label, never a refusal
                  -> {"actions": [[x, y], ...],        # [action_horizon, 2] raw pixels
-                     "latency_ms": 183.4}
+                     "latency_ms": 183.4, "steps": 10,
+                     "deadline_ms": 250.0,             # echoed only when the client sent one
+                     "deadline_missed": false}
 
 Cameras are named, not positional (models/observation.py): a payload may carry one view as
 `image` or any number under `cameras`, and the names are checked against the policy's own
@@ -31,6 +34,18 @@ limit), and a request is only ever executed under the server's inference lock, s
 queue on the policy instead of interleaving inside it. The server never rescales
 actions: the contract is raw pixels in, raw pixels out, the same units the environment
 takes, so a client cannot silently disagree with the harness about units.
+
+Three edges are enforced rather than trusted, because each one is a client bug that would
+otherwise be measured as a policy result:
+
+- `steps` is bounded by the sampler's own schedule (`max_steps`, 100 for the diffusion
+  checkpoint). `steps: 0` is not a fast policy, it is an invalid request, and a value above the
+  schedule is not a better policy either; both are 400s naming the bound.
+- `deadline_ms` is a *label*: the action is still returned, with `deadline_missed` set from the
+  measured `latency_ms`. Refusing a late chunk would make lateness unobservable at the one
+  point it matters.
+- `shutdown()` drains: it stops accepting, waits for the requests already inside the policy, then
+  closes. `ThreadingHTTPServer` would otherwise drop a response on Ctrl-C.
 """
 
 from __future__ import annotations
@@ -61,6 +76,12 @@ __all__ = ["MAX_BODY_BYTES", "PolicyServer", "build_obs", "serve"]
 # headroom rather than a policy: it exists to stop an unbounded `Content-Length` from being
 # trusted into `rfile.read`.
 MAX_BODY_BYTES = 32 * 2**20
+
+# The sampler's schedule length for the diffusion checkpoint this server was built around
+# (`num_train_timesteps=100`). A policy with a longer schedule passes its own bound to the
+# constructor; a request above the bound is answered 400 rather than run, because `steps=10**6`
+# is not a policy setting, it is a client that computed a step count in the wrong unit.
+DEFAULT_MAX_STEPS = 100
 
 
 def _frames(payload: Mapping[str, Any], spec: ObservationSpec) -> dict[str, np.ndarray]:
@@ -132,11 +153,13 @@ class PolicyServer(ThreadingHTTPServer):
         device: str = "cuda",
         steps: int = 10,
         action_horizon: int = 8,
+        max_steps: int = DEFAULT_MAX_STEPS,
     ) -> None:
         self.policy = policy
         self.policy_name = name
         self.device = device
-        self.steps = steps
+        self.max_steps = max_steps
+        self.steps = self.check_steps(steps)
         self.action_horizon = action_horizon
         # What this policy needs from the observation path, read once at construction so
         # `/health` advertises it and every request is checked against it.
@@ -147,11 +170,79 @@ class PolicyServer(ThreadingHTTPServer):
         # delay is reported as the policy's latency, which is the one number `/chunk` exists to
         # report honestly.
         self.inference_lock = threading.Lock()
+        # In-flight request count, for the drain in `shutdown`. `ThreadingHTTPServer` answers each
+        # request on its own thread and `daemon_threads` means `server_close` does not wait for
+        # them, so without a count a Ctrl-C during inference loses that client's response.
+        self._inflight = 0
+        self._drained = threading.Condition()
         super().__init__(address, _Handler)
 
     @property
     def port(self) -> int:
         return int(self.server_address[1])
+
+    def check_steps(self, raw: Any) -> int:
+        """Validate a sampler step count, naming the bound when it is out of range."""
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise ValueError(f"steps must be an integer, got {type(raw).__name__}")
+        if not 1 <= raw <= self.max_steps:
+            raise ValueError(
+                f"steps must be in [1, {self.max_steps}] (the sampler's schedule length), got {raw}"
+            )
+        return raw
+
+    def check_deadline(self, raw: Any) -> float | None:
+        """Validate `deadline_ms`, or return None when the client did not send one."""
+        if raw is None:
+            return None
+        if isinstance(raw, bool) or not isinstance(raw, int | float):
+            raise ValueError("deadline_ms must be a number of milliseconds")
+        if not raw > 0:
+            raise ValueError(f"deadline_ms must be > 0, got {raw}")
+        return float(raw)
+
+    def _finished(self) -> None:
+        with self._drained:
+            self._inflight -= 1
+            if self._inflight <= 0:
+                self._drained.notify_all()
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        with self._drained:
+            self._inflight += 1
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            # The request never reached a handler thread, so nothing else will release it.
+            self._finished()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._finished()
+
+    def shutdown(self, drain_timeout_s: float = 30.0) -> None:
+        """Stop accepting, then wait for the requests already inside the policy.
+
+        The order is the point: stopping first means no new request can be counted after the
+        wait begins, so `_inflight == 0` is an end state rather than a snapshot. Blocking
+        requests inside the policy are exactly what a `daemon_threads` shutdown would truncate.
+        """
+        super().shutdown()
+        deadline = time.monotonic() + drain_timeout_s
+        with self._drained:
+            while self._inflight > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    print(
+                        f"shutdown: {self._inflight} request(s) still running after "
+                        f"{drain_timeout_s:.0f}s; closing anyway",
+                        flush=True,
+                    )
+                    return
+                self._drained.wait(remaining)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -184,6 +275,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "pred_horizon": policy.pred_horizon,
                 "action_dim": policy.action_dim,
                 "steps": self.server.steps,
+                "max_steps": self.server.max_steps,
                 "action_horizon": self.server.action_horizon,
                 "cameras": list(self.server.spec.cameras),
                 "instruction_required": self.server.spec.requires_instruction,
@@ -218,7 +310,8 @@ class _Handler(BaseHTTPRequestHandler):
             instruction = str(payload.get("instruction", ""))
             check_instruction(spec, instruction)
             obs = build_obs(payload, policy.obs_horizon, self.server.device, spec)
-            steps = int(payload.get("steps", self.server.steps))
+            steps = self.server.check_steps(payload.get("steps", self.server.steps))
+            deadline_ms = self.server.check_deadline(payload.get("deadline_ms"))
             with self.server.inference_lock:
                 if self.server.device.startswith("cuda"):
                     torch.cuda.synchronize()
@@ -231,10 +324,18 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._send(400, {"error": f"{type(exc).__name__}: {exc}"})
             return
-        self._send(
-            200,
-            {"actions": actions.tolist(), "latency_ms": latency_ms, "steps": steps},
-        )
+        body: dict[str, Any] = {
+            "actions": actions.tolist(),
+            "latency_ms": latency_ms,
+            "steps": steps,
+        }
+        # A missed deadline labels the measurement; it never withholds the action (see the
+        # module docstring). Absent when the client did not ask, so a reply cannot imply a
+        # deadline it was never given.
+        if deadline_ms is not None:
+            body["deadline_ms"] = deadline_ms
+            body["deadline_missed"] = latency_ms > deadline_ms
+        self._send(200, body)
 
 
 def serve(
@@ -246,6 +347,7 @@ def serve(
     device: str = "cuda",
     steps: int = 10,
     action_horizon: int = 8,
+    max_steps: int = DEFAULT_MAX_STEPS,
 ) -> None:
     """Serve until interrupted. `port=0` picks a free port (used by the test)."""
     server = PolicyServer(
@@ -255,11 +357,15 @@ def serve(
         device=device,
         steps=steps,
         action_horizon=action_horizon,
+        max_steps=max_steps,
     )
     print(f"serving {name} on http://{host}:{server.port} (POST /chunk, GET /health)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
+        print("interrupted: draining in-flight requests", flush=True)
     finally:
+        # Ctrl-C is the normal way to stop this, and a client mid-inference deserves its
+        # answer: `shutdown` stops accepting and waits for what is already inside the policy.
+        server.shutdown()
         server.server_close()
