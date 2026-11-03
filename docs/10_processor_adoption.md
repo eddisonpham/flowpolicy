@@ -180,6 +180,30 @@ CPU tests in `tests/unit/test_normalization_protocol.py` use this JSON layout, i
 whose `state_file` says `step_7` at index 0. The table above is unchanged: the sidecars were
 present when it ran.
 
+**Three more readers had the same assumption, all on the control path (2026-11-02).** The paragraph
+above fixed the eval side. An audit of every remaining reader of a processor JSON found the
+assumption in the *producer* and in the control's own preflight, which is the worse place for it:
+the control exists to be the reference that has none of this repo's code in its path.
+
+- `scripts/lerobot_migrate.py` checked four names (`model.safetensors`, `config.json`, the two
+  JSONs) and then "verified" the directory by loading it through
+  `DiffusionPolicy.from_pretrained` -- which succeeds with no statistics. A migration interrupted
+  between writing the JSONs and their sidecars would have printed `verified: ...` for a directory
+  that scores an unnormalized policy.
+- `scripts/lerobot_control.sh` reused `checkpoints/diffusion_pusht_migrated` whenever
+  `policy_preprocessor.json` existed and `config.json` was non-empty, so that partial directory was
+  never rebuilt -- and the reuse branch is the one every later run takes.
+- `scripts/lerobot_control_rows.py` refused only a directory without `policy_preprocessor.json`.
+
+All four callers (including `load_processor_norm`) now go through `check_processor_files`, which is
+public for that reason and returns the sidecars it checked so a caller prints what it proved rather
+than a bare pass. The shell step runs it through the control env's own interpreter, with `src/` on
+`sys.path` and no project install needed, and stops before `lerobot-eval`. Two CPU tests pin the
+helper: what it returns for a complete directory, and that it refuses a directory holding
+`config.json` and `model.safetensors` but not the statistics. Not affected, and checked:
+`models/pretrained_vqbet.py` and `load_normalization` read the eight buffers out of
+`model.safetensors` and never open a processor JSON, so this assumption cannot arise there.
+
 Shape of the work if it is taken: one script (`scripts/processor_equiv.py`, ~60 lines, run with
 `.venv-lerobot/Scripts/python.exe` because only that env has `lerobot`) plus one unit test on the
 part that can run without the library (the buffer path), and the numbers written into `docs/04`.

@@ -475,6 +475,26 @@ postprocessor the pilot would use reproduces `action.mean` / `action.std` exactl
 unverified is everything the hardware buys: precondition 1 (the env on the pinned stack),
 precondition 2 (the weights loading), and the 28-chunk episode itself.
 
+**Precondition 2's config half is checked, and it corrected an assumption about the cadence
+(2026-11-02).** `tests/unit/test_smolvla_pilot.py` loads the checkpoint's own `config.json` through
+lerobot's `PreTrainedConfig.from_pretrained` on a host with no `transformers`, and asserts the
+declared geometry rather than the class defaults: `chunk_size` 50, `n_action_steps` **1**,
+`n_obs_steps` 1, action 7 wide, state 8, two 256x256 views, `max_action_dim` 32, `num_steps` 10,
+VLM `SmolVLM2-500M-Instruct`, ACTION and STATE `MEAN_STD` against VISUAL `IDENTITY`. Three findings.
+First, `smolvla` is not a registered `PreTrainedConfig` choice until
+`lerobot.policies.smolvla.configuration_smolvla` is imported -- `from_pretrained` alone raises
+`ValueError: Policy type 'smolvla' ... is not registered. Available policy types: {}` -- so a
+config-only check has to import that module first; the pilot never hit it because `_import_backend`
+imports `modeling_smolvla`, which imports the config. Second, the checkpoint asks for **one action
+per call** (`n_action_steps: 1`, against `chunk_size: 50`), which sizes `select_action`'s queue and
+not what `predict_action_chunk` returns: `_get_action_chunk` unpads to the 7-wide `action_feature`
+and does not slice by `n_action_steps`, so 28 chunks of ten actions is still a real configuration of
+this checkpoint and the pilot's arithmetic stands. That is read from the pinned source, not measured
+-- the pilot is what measures it. Third, the weights half still needs `transformers` and the 2 GB
+checkpoint, so precondition 2 is half-verified: the geometry is settled, the load is not. The test
+skips where `lerobot` is absent (CI installs neither it nor `transformers`) and where `transformers`
+is present, since such a host cannot show the absence at all.
+
 **The full run still cannot happen here.** It needs the LIBERO pin, `transformers` and the 2 GB
 checkpoint in one interpreter -- the platform decision 5.1 leaves open -- so on a Windows host it
 prints `[NOT RUN]` with the reason and exits 2, distinct from exit 1 for a precondition that failed
@@ -485,10 +505,13 @@ guess.
 
 **The Linux path is now a runbook rather than a list of prerequisites.** `docs/12_linux_runbook.md`
 runs from preflight to the first recorded row: a separate `.venv-pilot` (because `lerobot==0.6.1`
-caps `torch<2.12` and `.venv` pins 2.14.1), the port-walk gate against that interpreter -- which must
-print `[PINNED ]` -- *before* the 2 GB download, LIBERO's `~/.libero/config.yaml` without which the
+caps `torch<2.12` and `.venv` pins 2.14.1), then the two gates that cost nothing before the
+download: precondition 3 alone (`just smolvla-pilot-stats`, step 2), which is already `[ok]` on this
+host and so runs on Linux on the measurement's own stack rather than for the first time, and the
+port-walk gate against that interpreter, which must print `[PINNED ]` (step 3). Then LIBERO's
+`~/.libero/config.yaml` without which the
 import blocks on `input()`, then the three preconditions, then the episode. It has not been executed,
-and its section 10 says which steps are inference rather than observation and why both of them fail
+and its section 11 says which steps are inference rather than observation and why both of them fail
 ahead of the download.
 
 ## 6. Options, sized

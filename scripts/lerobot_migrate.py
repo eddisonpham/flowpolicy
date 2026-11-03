@@ -36,8 +36,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file, save_file
+
+from policybench.models.normalization import check_processor_files
 
 REPO = "lerobot/diffusion_pusht"
 DEFAULT_OUT = Path("checkpoints/diffusion_pusht_migrated")
@@ -107,6 +111,17 @@ def main() -> None:
     ]
     if missing:
         raise SystemExit(f"migrated directory incomplete: {missing}")
+
+    # The four names above are not the artifact. Each processor JSON keeps its numbers in the
+    # `.safetensors` sidecar its `state_file` names, and lerobot loads a pipeline that cannot find
+    # one *with no statistics at all* -- so the load check below would print `verified` for a
+    # directory that scores an unnormalized policy. Same helper as the eval-side preflight, so the
+    # producer and its consumers cannot drift apart again.
+    try:
+        checked = check_processor_files(out)
+    except FileNotFoundError as exc:
+        raise SystemExit(f"migrated directory incomplete: {exc}") from exc
+    print(f"sidecars present: {', '.join(checked)}")
 
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies import get_policy_class

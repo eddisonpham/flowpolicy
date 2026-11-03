@@ -46,6 +46,25 @@ else
   echo "== reusing $MIGRATED"
 fi
 
+# The migration's own file list is not the artifact: each processor JSON names a `.safetensors`
+# sidecar that holds the statistics, and `lerobot-eval` loads a pipeline without one as the
+# *identity* -- an unnormalized policy, scored as if it were the checkpoint. Same helper the
+# eval-side preflight uses, through this env's interpreter, before any episode is paid for.
+"$PY" - "$MIGRATED" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "src")
+from policybench.models.normalization import check_processor_files
+
+root = Path(sys.argv[1])
+try:
+    checked = check_processor_files(root)
+except FileNotFoundError as exc:
+    raise SystemExit(f"[STOP] {exc}\n       delete {root} and re-run to rebuild it from the Hub")
+print(f"== processors: {len(checked)} sidecars present in {root}")
+PY
+
 echo "== lerobot-eval: $EPISODES episodes from seed $SEED, batch $BATCH, own DDPM@100"
 # `use_async_envs=false`: the async vector env asks for a `forkserver` multiprocessing context,
 # which does not exist on Windows (`ValueError: cannot find context for 'forkserver'`). The sync

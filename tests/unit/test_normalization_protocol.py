@@ -19,6 +19,7 @@ import torch
 from policybench.models.normalization import (
     BuffersNorm,
     ProcessorsNorm,
+    check_processor_files,
     config_id_marks_path,
     denormalize_action,
     flatten_history,
@@ -250,6 +251,28 @@ def test_a_missing_sidecar_is_named_before_lerobot_is_imported(tmp_path: Path) -
 def test_a_directory_without_the_processor_json_is_refused_by_name(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r"policy_preprocessor\.json"):
         load_processor_norm(tmp_path)
+
+
+def test_check_processor_files_returns_what_it_proved(tmp_path: Path) -> None:
+    # The migration, the control's row writer and `lerobot_control.sh` now gate on this same
+    # function, so its contract is the directory being usable *and* which files said so.
+    _write_processors(tmp_path, with_sidecars=True)
+    assert check_processor_files(tmp_path) == [
+        "policy_preprocessor_step_3_normalizer_processor.safetensors",
+        "policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+    ]
+
+
+def test_check_processor_files_follows_each_json_not_just_the_first(tmp_path: Path) -> None:
+    # Every other name present -- `config.json`, the weights, the preprocessor's statistics -- and
+    # only the postprocessor's sidecar gone. That is the state the migration's four-name list
+    # accepted, and the first JSON's own check passes, so this is what proves both are followed.
+    _write_processors(tmp_path, with_sidecars=True)
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "model.safetensors").write_text("", encoding="utf-8")
+    (tmp_path / "policy_postprocessor_step_0_unnormalizer_processor.safetensors").unlink()
+    with pytest.raises(FileNotFoundError, match=r"step_0_unnormalizer_processor\.safetensors"):
+        check_processor_files(tmp_path)
 
 
 def test_override_processor_device_keeps_the_sidecar_and_the_declared_mapping() -> None:

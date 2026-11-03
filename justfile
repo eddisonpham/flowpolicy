@@ -216,6 +216,14 @@ smolvla-pilot py="uv run python":
 smolvla-pilot-check py="uv run python":
     {{py}} scripts/smolvla_pilot.py --check-only
 
+# Precondition 3 alone (docs/11 4.4 step 1, run as step 2 of docs/12): the postprocessor the pilot
+# would use must reproduce the checkpoint's declared statistics at 1e-5. No LIBERO, no
+# `transformers`, no GPU, no episode -- it reads two small files from the checkpoint repo and fetches
+# no snapshot, which is why the runbook orders it before the 2 GB download. Exit 1 covers both a
+# `mismatch` and a `not run` (the file could not be read); the printed JSON names which.
+smolvla-pilot-stats py="uv run python":
+    {{py}} scripts/smolvla_pilot.py --stats-only --device cpu
+
 # Option H's episode arm (docs/10 section 5.1): the library's normalization in the measured path.
 # 600 is the pilot's cheapest branch -- a 4 pp effect costs 243 episodes at 5 % discordance and
 # 2,157 at 44 %, so the pilot's psi_hat decides the count and `eval-dp-buffers` runs the same one.

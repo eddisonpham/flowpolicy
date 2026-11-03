@@ -23,6 +23,20 @@ A directory missing those would load both pipelines with no statistics, i.e. as 
 `scripts/processor_equiv.py` would then report a disagreement that was really a missing file. The
 preflight now follows `named_sidecars()` before the lerobot import, so CI sees `FileNotFoundError`.
 - Six tests in `tests/unit/test_normalization_protocol.py` pin the real JSON layout.
+- `docs/12_linux_runbook.md` now runs `--stats-only` as **step 2** (`just smolvla-pilot-stats`),
+  before the port walk, the LIBERO config and the 2 GB download, with the `mismatch` vs `not run`
+  distinction and the 7.45e-09 baseline written down; the renumbering corrected three stale `step 4`
+  references that pointed at the interpreter install.
+- The sidecar gate now reaches the producer and the control: `check_processor_files` is public and
+  is what `scripts/lerobot_migrate.py`, `scripts/lerobot_control_rows.py` and `lerobot_control.sh`
+  call, all three of which previously accepted a directory whose JSONs exist and whose statistics do
+  not (and which lerobot then loads as the identity).
+- Precondition 2's **config half** is checked on this host, with `transformers` absent: the real
+  `config.json` loads through `PreTrainedConfig.from_pretrained` as `SmolVLAConfig` and declares
+  `chunk_size` 50 / `n_action_steps` **1** / `n_obs_steps` 1, action 7, state 8, two 256x256 views,
+  `max_action_dim` 32, `num_steps` 10, ACTION+STATE `MEAN_STD`. The 10-action cadence survives this
+  because `predict_action_chunk` does not slice by `n_action_steps` (source-read, not measured); the
+  weights half still needs `transformers`, so precondition 2 is half-verified.
 - Evidence: `just verify` scope green on 2026-11-02 -- ruff format, ruff check, 162 CPU unit tests.
 
 ## What changed on 2026-11-02 (precondition 3 could not have passed; now tested)
@@ -47,7 +61,7 @@ broken in three ways. **No GPU time, no rows.** The pilot is still unrun.
 
 `docs/12_linux_runbook.md` takes a fresh Linux machine from preflight to the pilot's first recorded
 row. **Not executed** -- there is no Linux host here -- so no row, no per-chunk number and no change
-to 5.1's band. Section 10 of the runbook names the two steps that are inference rather than
+to 5.1's band. Section 11 of the runbook names the two steps that are inference rather than
 observation (LIBERO's Linux resolution, and whether robosuite 1.4.0's mujoco renders offscreen here)
 and why both fail before the download.
 

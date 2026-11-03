@@ -32,6 +32,7 @@ from policybench.eval.lerobot_rows import (
     paired_counts,
 )
 from policybench.eval.stats import mcnemar_exact, p_text
+from policybench.models.normalization import check_processor_files
 
 
 def _summary(rows: list[dict[str, Any]]) -> str:
@@ -63,11 +64,16 @@ def main() -> None:
     args = parser.parse_args()
 
     migrated = Path(args.checkpoint)
-    if not (migrated / "policy_preprocessor.json").exists():
+    # The JSONs alone are not the artifact: each names a sidecar holding its statistics, and
+    # `lerobot-eval` loads a pipeline without one as the identity -- 200 episodes scored on an
+    # unnormalized policy, which is precisely the failure this control exists to rule out.
+    try:
+        check_processor_files(migrated)
+    except FileNotFoundError as exc:
         raise SystemExit(
             f"missing migrated checkpoint in {migrated} -- run `just lerobot-control` once "
-            "(it builds the processors this loop needs)"
-        )
+            f"(it builds the processors this loop needs)\n{exc}"
+        ) from exc
     config_id = args.config_id or f"lerobot_control_n{args.episodes}"
 
     from lerobot.scripts import lerobot_eval

@@ -16,8 +16,9 @@ The guard on magnitudes is a *gross-value* trap, not a scale check: a chunk scal
 inside the box and passes. Catching that is precondition 3's job -- the postprocessor has to
 reproduce the checkpoint's declared statistics -- and this file does not pretend otherwise.
 
-No lerobot, no torch CUDA, no checkpoint: the module imports its backend lazily, so everything
-here runs in CI.
+No lerobot, no torch CUDA, no checkpoint: the module imports its backend lazily, so the first two
+sections run in CI. The last one cannot -- it loads the checkpoint's `config.json` through lerobot
+itself -- so it skips where lerobot is absent, which is CI, and says so rather than passing.
 
 The second half covers precondition 3, the statistics probe, and its fixtures are shaped like the
 real checkpoint rather than like the code's first guess: `HuggingFaceVLA/smolvla_libero`'s
@@ -297,3 +298,133 @@ def test_the_two_dimensional_probe_shape_is_used_when_the_chunk_shape_is_refused
     result = _statistics_check("x", _Unnormalizer(low, high, rank=2), "cpu")
     assert result["verdict"] == "ok"
     assert result["probe_shape"] == "(1, 7)"
+
+
+# ---- precondition 2: the checkpoint's config, which needs no transformers ----------------------
+#
+# Precondition 2 is `SmolVLAPolicy.from_pretrained`, and it has been `[NOT RUN]` on every host this
+# repo has: the *weights* half needs the VLM backbone and therefore `transformers`. The config half
+# does not, so it is checkable here -- and worth checking, because the geometry it declares is what
+# the pilot's 28-chunks-of-ten arithmetic rests on.
+#
+# Verbatim from `HuggingFaceVLA/smolvla_libero`'s `config.json`, read 2026-11-02. Verbatim on
+# purpose: a fixture trimmed to the asserted fields would prove the test rather than the checkpoint.
+_REAL_CONFIG: dict[str, object] = {
+    "type": "smolvla",
+    "n_obs_steps": 1,
+    "input_features": {
+        "observation.images.image": {"type": "VISUAL", "shape": [3, 256, 256]},
+        "observation.images.image2": {"type": "VISUAL", "shape": [3, 256, 256]},
+        "observation.state": {"type": "STATE", "shape": [8]},
+    },
+    "output_features": {"action": {"type": "ACTION", "shape": [7]}},
+    "device": "cuda",
+    "use_amp": False,
+    "push_to_hub": True,
+    "repo_id": "None",
+    "private": None,
+    "tags": None,
+    "license": None,
+    "chunk_size": 50,
+    "n_action_steps": 1,
+    "normalization_mapping": {"VISUAL": "IDENTITY", "STATE": "MEAN_STD", "ACTION": "MEAN_STD"},
+    "max_state_dim": 32,
+    "max_action_dim": 32,
+    "resize_imgs_with_padding": [512, 512],
+    "empty_cameras": 0,
+    "adapt_to_pi_aloha": False,
+    "use_delta_joint_actions_aloha": False,
+    "tokenizer_max_length": 48,
+    "num_steps": 10,
+    "use_cache": True,
+    "freeze_vision_encoder": True,
+    "train_expert_only": True,
+    "train_state_proj": True,
+    "optimizer_lr": 0.0001,
+    "optimizer_betas": [0.9, 0.95],
+    "optimizer_eps": 1e-08,
+    "optimizer_weight_decay": 1e-10,
+    "optimizer_grad_clip_norm": 10,
+    "scheduler_warmup_steps": 1000,
+    "scheduler_decay_steps": 30000,
+    "scheduler_decay_lr": 2.5e-06,
+    "vlm_model_name": "HuggingFaceTB/SmolVLM2-500M-Instruct",
+    "load_vlm_weights": True,
+    "add_image_special_tokens": False,
+    "attention_mode": "cross_attn",
+    "prefix_length": 0,
+    "pad_language_to": "longest",
+    "num_expert_layers": -1,
+    "num_vlm_layers": 0,
+    "self_attn_every_n_layers": 2,
+    "expert_width_multiplier": 0.5,
+    "min_period": 0.004,
+    "max_period": 4.0,
+}
+
+
+def test_the_real_config_loads_through_lerobot_without_transformers(tmp_path: Path) -> None:
+    """Precondition 2's config half, on the real file, with the VLM stack genuinely absent.
+
+    Two skips, both of which would otherwise make this a false green. `lerobot` is not installed in
+    CI (it caps torch < 2.12 and the project pins 2.14.1), so this runs in `.venv` and on the pilot
+    host, not in CI. And if `transformers` *is* installed the "without transformers" claim cannot be
+    made at all, so a host that has it is told it proved nothing.
+    """
+    import importlib.util
+
+    pytest.importorskip("lerobot", reason="loads through lerobot's own config; CI has no lerobot")
+    if importlib.util.find_spec("transformers") is not None:
+        pytest.skip(
+            "transformers is installed here, so the config cannot be shown to load without it"
+        )
+
+    from lerobot.configs import NormalizationMode
+    from lerobot.configs.policies import PreTrainedConfig
+
+    # `smolvla` is not a registered choice until its config module is imported: without this line
+    # `from_pretrained` raises `ValueError: Policy type 'smolvla' ... is not registered. Available
+    # policy types: {}`. The pilot never hits it because `_import_backend` imports the modeling
+    # module, which imports this one.
+    from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+
+    (tmp_path / "config.json").write_text(json.dumps(_REAL_CONFIG), encoding="utf-8")
+    config = PreTrainedConfig.from_pretrained(tmp_path)
+
+    assert isinstance(config, SmolVLAConfig)
+    assert config.type == "smolvla"
+    # The geometry, from the checkpoint rather than from the class defaults (50/50/1, not 50/1/1).
+    assert config.chunk_size == 50
+    assert config.n_action_steps == 1
+    assert config.n_obs_steps == 1
+    assert config.max_action_dim == 32
+    assert config.max_state_dim == 32
+    assert config.resize_imgs_with_padding == (512, 512)
+    assert config.empty_cameras == 0
+    assert config.num_steps == 10
+    assert config.vlm_model_name == "HuggingFaceTB/SmolVLM2-500M-Instruct"
+    assert config.action_delta_indices == list(range(50))
+
+    assert config.output_features is not None and config.input_features is not None
+    assert config.output_features["action"].shape == (7,)
+    assert config.input_features["observation.state"].shape == (8,)
+    assert config.input_features["observation.images.image"].shape == (3, 256, 256)
+    assert sorted(config.input_features) == [
+        "observation.images.image",
+        "observation.images.image2",
+        "observation.state",
+    ]
+
+    assert config.normalization_mapping["ACTION"] == NormalizationMode.MEAN_STD
+    assert config.normalization_mapping["STATE"] == NormalizationMode.MEAN_STD
+    assert config.normalization_mapping["VISUAL"] == NormalizationMode.IDENTITY
+
+    # Why the pilot's cadence is still a real configuration of this checkpoint even though the
+    # checkpoint asks for ONE action per call: `_get_action_chunk` unpads to the 7-wide
+    # `action_feature` and does not slice by `n_action_steps` (read in lerobot 0.6.1), so
+    # `predict_action_chunk` hands back all 50 and the pilot executes ten of them. `n_action_steps`
+    # sizes `select_action`'s queue, which the pilot does not use.
+    assert config.n_action_steps < 10 <= config.chunk_size
+
+    # Nothing above pulled the VLM stack in.
+    assert importlib.util.find_spec("transformers") is None

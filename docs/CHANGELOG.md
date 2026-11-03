@@ -2,6 +2,69 @@
 
 Paths in entries below refer to where files lived on the date of the entry. The 2026-10-27 entry lists every move (from-scratch measurements now under `results/ablation/`). Exception: the 2026-10-28 rename entry below rewrote `flowpolicy` to `policybench` in the older entries, so their paths still resolve; the events they describe happened under the earlier name, and the uploaded brief is still `flowpolicy_complete/`.
 
+## 2026-11-02: Precondition 2's config half is checked without transformers, and it found the cadence
+
+The pilot's precondition 2 (`SmolVLAPolicy.from_pretrained`) has been `[NOT RUN]` everywhere this
+repo has run, because the weights need the VLM backbone and `transformers`. The config half needs
+neither, so `tests/unit/test_smolvla_pilot.py` now loads the real `config.json` through lerobot's
+`PreTrainedConfig.from_pretrained` and asserts what it declares: 50/1/1 for
+`chunk_size`/`n_action_steps`/`n_obs_steps`, action 7, state 8, two 256x256 views, `max_action_dim`
+32, `num_steps` 10, ACTION/STATE `MEAN_STD`, VISUAL `IDENTITY`.
+
+- **`n_action_steps` is 1, not 10.** The pilot's ten-action cadence is available because
+  `_get_action_chunk` does not slice by it -- `predict_action_chunk` returns all 50 -- while
+  `select_action`'s queue, which the pilot does not use, is what the field sizes. Read from lerobot
+  0.6.1, not measured; the pilot measures it.
+- **`smolvla` is unregistered until its config module is imported**, so a config-only load raises
+  `ValueError: Policy type 'smolvla' ... is not registered`. The pilot is unaffected (its backend
+  import pulls the config in), but any config-only check has to import it explicitly.
+- The test skips where lerobot is absent -- CI, which installs neither it nor `transformers` -- and
+  where `transformers` is present, since then "without transformers" is unprovable. Precondition 2
+  stays half-verified: geometry settled, weights not.
+
+## 2026-11-02: The sidecar gate reaches the migration and the control, not just the eval side
+
+Auditing the remaining readers of a processor JSON for the same "the JSON is the artifact"
+assumption found it three more times, all on the path that produces and runs the adapter-free
+control -- the one experiment whose point is to be the reference with none of this repo's code in
+it.
+
+- **`scripts/lerobot_migrate.py`** checked four names and then "verified" the directory by loading
+  it through `DiffusionPolicy.from_pretrained`, which succeeds with no statistics. A migration
+  interrupted between writing the JSONs and their sidecars would have printed `verified`.
+- **`scripts/lerobot_control.sh`** reused `checkpoints/diffusion_pusht_migrated` whenever
+  `policy_preprocessor.json` existed and `config.json` was non-empty, so that partial directory was
+  never rebuilt -- and the reuse branch is the one every later run takes.
+- **`scripts/lerobot_control_rows.py`** refused only a directory with no `policy_preprocessor.json`.
+
+`normalization.check_processor_files` is now public and is the single gate for all four callers
+(`load_processor_norm` included), returning the sidecars it checked so a caller can print what it
+proved. The shell step runs it through the control env's interpreter before `lerobot-eval`. Two CPU
+tests pin it: the list a complete directory returns, and that it refuses a directory with
+`config.json` and `model.safetensors` present but the statistics missing. Checked and not affected:
+`models/pretrained_vqbet.py` and `load_normalization` read the eight buffers out of
+`model.safetensors` and never open a processor JSON.
+
+## 2026-11-02: The stats gate becomes the runbook's first gate, before the download
+
+`docs/12_linux_runbook.md` ran the preconditions only after the 2 GB checkpoint, which is the wrong
+order for the one check that costs nothing and invalidates everything: precondition 3 is arithmetic
+on two files in the checkpoint repo.
+
+- **New step 2** (`just smolvla-pilot-stats`, `--stats-only --device cpu`) sits between building the
+  interpreter and the port walk. It reads `policy_postprocessor.json` and the sidecar it names, a few
+  hundred KB -- `PolicyProcessorPipeline` fetches named files and never runs `snapshot_download` --
+  so a failure costs a minute instead of the download.
+- **Two things the section states because the runbook did not.** `--stats-only` exiting 1 covers both
+  `mismatch` (a stop) and `not run` (the sidecar could not be read), distinguished only by the
+  printed JSON's `verdict`; and the number is a comparison rather than a tick -- 7.45e-09 here, so a
+  materially larger difference on the Linux stack is that interpreter's arithmetic, which is the
+  arithmetic the pilot would measure on.
+- **Renumbering fixed three stale `step 4` references** (the port-walk section, the exit-code table
+  and the failure ladder) that pointed at the interpreter install, which is step 1. Steps are now
+  0 preflight, 1 interpreter, 2 stats, 3 port walk, 4 LIBERO config, 5-6 download + preconditions,
+  7 measurement.
+
 ## 2026-11-02: Precondition 3 verified on this host; the equiv gate now follows `state_file` too
 
 The probe that was just repaired was run against the real checkpoint, and the same sidecar mistake
@@ -53,7 +116,7 @@ the probe could never have passed. **No GPU time, no rows**; the pilot is still 
 `docs/11` 5.1 says the pilot is one install session away on a Linux box and then never says which
 session. `docs/12_linux_runbook.md` is that: preflight, the pilot interpreter, the pin check before
 the 2 GB download, LIBERO's config file, the preconditions, the measurement, and a failure ladder.
-**Not executed** -- this repo has no Linux host -- and section 10 of the runbook names the two steps
+**Not executed** -- this repo has no Linux host -- and section 11 of the runbook names the two steps
 that are inference rather than observation.
 
 - **Two interpreters, and the runbook says why.** `lerobot==0.6.1` caps `torch<2.12` while `.venv`

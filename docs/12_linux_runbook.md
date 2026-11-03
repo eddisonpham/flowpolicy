@@ -4,7 +4,7 @@ Status: **not executed end to end on a Linux host** (this repo has only ever run
 host in `docs/02` section 2). Every command below is composed from three things that are recorded,
 not recalled: the versions `docs/11` section 4.4 measured by installing them, the pins this repo
 already runs, and the pilot's own preconditions. Where a step is an inference rather than an
-observation it says so. Read the whole of section 8 before treating a green run as a result.
+observation it says so. Read the whole of section 11 before treating a green run as a result.
 
 Links: [11_sota_models](11_sota_models.md) (why this exists), [02_environment_setup](02_environment_setup.md),
 [CHANGELOG](CHANGELOG.md).
@@ -23,8 +23,8 @@ From `docs/11` section 5.1, which is a hardware statement rather than a spending
 | Network | Hugging Face reachable | the checkpoint is a 2 GB download |
 | GL | an offscreen backend that MuJoCo can use | the env renders two camera views per step |
 
-Time: **0.5 setup days** in `docs/11` 5.1's table. Steps 0-3 below are about an hour; the rest is a
-download and a 15-minute measurement.
+Time: **0.5 setup days** in `docs/11` 5.1's table. Steps 0-4 below are about an hour; the rest is
+the download (step 5) and a 15-minute measurement (step 7).
 
 ## 2. The split that decides everything: two interpreters, not one
 
@@ -95,7 +95,42 @@ PY
 A CPU-only `torch` here is the one failure worth stopping on: the pilot would run, produce a
 believable row, and the GPU-hours projection would be off by an order of magnitude.
 
-## 5. Step 2 -- prove the pin before paying for the download
+## 5. Step 2 -- precondition 3, before anything is downloaded (2 min)
+
+The postprocessor the pilot would use has to reproduce the statistics the checkpoint declares, or
+every timing row describes a differently calibrated model. That is arithmetic on the checkpoint's
+own files, so it needs no LIBERO, no `transformers`, no GPU and no episode -- `--stats-only` runs it
+alone, in the interpreter built in step 1:
+
+```bash
+just smolvla-pilot-stats py=".venv-pilot/bin/python"
+```
+
+Expected, in under a second apart from the fetch:
+
+```
+[ok] precondition 3: postprocessor matches the declared mean_std statistics over 7 dims (max |diff| 7.45e-09, bar 1e-05)
+```
+
+**Why it is ordered before step 3 and step 5.** It reads exactly two files from the checkpoint repo
+(`policy_postprocessor.json` and the `policy_postprocessor_step_*_unnormalizer_processor.safetensors`
+it names, a few hundred KB: `PolicyProcessorPipeline` fetches named files and never runs
+`snapshot_download`), so a failure here costs a minute and no bandwidth. Reached after step 5 it
+would cost the 2 GB first, to learn that the postprocessor disagrees -- and this is the one
+precondition whose failure invalidates every number that follows rather than just the report.
+
+**Exit 1 here means two different things, and the printed JSON says which.** `"verdict":
+"mismatch"` is a stop: the pilot would calibrate another model, and `--skip-stats` is not the way
+past it. `"verdict": "not run"` is that the sidecar could not be read -- network, a rate limit, a
+repo that moved -- which says nothing about the postprocessor and is fixed by re-running, not by
+skipping.
+
+**Read the number, do not just tick it.** The same probe returned **7.45e-09** on the repo's Windows
+host against the same checkpoint (`docs/11` 5.2). A materially larger difference here is a
+difference in the arithmetic *this* interpreter performs, which is the arithmetic the pilot is about
+to measure -- not fp32 noise to wave through.
+
+## 6. Step 3 -- prove the pin before paying for the download
 
 `docs/11` 4.5's port ladder only matters on a robosuite that is *not* LIBERO's pin. Run the gate
 against this interpreter; it is seconds, CPU and network-free:
@@ -106,11 +141,11 @@ against this interpreter; it is seconds, CPU and network-free:
 
 Expected: `[PINNED ] robosuite 1.4.0 is LIBERO's own pin: the ladder does not apply.` and exit 0.
 Anything else -- `ladder intact`, `drift`, or a 1.5.x version -- means the interpreter is not on
-LIBERO's stack, and every number that follows would come from a stack nobody else runs. Fix step 4
+LIBERO's stack, and every number that follows would come from a stack nobody else runs. Fix step 1
 before continuing. (`just port-walk` points at `.venv-libero`, the Windows probe env, so it is the
 wrong interpreter here on purpose.)
 
-## 6. Step 3 -- LIBERO's config file, or the run dies on a prompt
+## 7. Step 4 -- LIBERO's config file, or the run dies on a prompt
 
 LIBERO calls `input()` when `~/.libero/config.yaml` is missing, so an unattended run gets
 `EOFError` before any env exists [V, `docs/11` 4.4]. Write the file, deriving the paths from the
@@ -143,7 +178,7 @@ print(len(benchmark.get_benchmark_dict()['libero_spatial']().tasks))"` must prin
 `LIBERO_CONFIG_PATH` pointing at a directory works instead of `~/.libero`, and is what the port-walk
 gate uses; the pilot does not set it, so the file has to exist at one of those two places.
 
-## 7. Steps 4-5 -- the checkpoint, then the preconditions
+## 8. Steps 5-6 -- the checkpoint, then the preconditions
 
 Download explicitly, so that a failure inside the pilot means "the checkpoint is broken" rather than
 "the network was down":
@@ -161,20 +196,23 @@ just smolvla-pilot-check py=".venv-pilot/bin/python"
 
 Three `[ok]` lines are required, in this order: the env constructs on the pinned stack, the
 checkpoint loads, and the postprocessor reproduces the checkpoint's own declared statistics at 1e-5.
+Precondition 3 was already green at step 2; it re-runs here because `--check-only` runs all three,
+and it has to print the number step 2 printed -- a different one means the interpreter changed
+between the two runs, which is worth knowing before 28 chunks rather than after.
 Exit codes mean different things and should not be conflated:
 
 | Exit | Meaning | What to do |
 |---|---|---|
-| 0 | preconditions green, nothing measured (`--check-only`) | go to step 6 |
-| 1 | a precondition **failed on this host** | section 9's ladder; a stats `mismatch` is a stop, not a retry |
-| 2 | the stack is absent from this interpreter (`[NOT RUN]`, naming the module) | step 4 did not install, or you are on the wrong interpreter |
+| 0 | preconditions green, nothing measured (`--check-only`) | go to step 7 |
+| 1 | a precondition **failed on this host** | section 10's ladder; a stats `mismatch` is a stop, not a retry |
+| 2 | the stack is absent from this interpreter (`[NOT RUN]`, naming the module) | step 1 did not install, or you are on the wrong interpreter |
 
 Precondition 3 is `docs/11` 4.4's step 1 and it stops the run on purpose: if the postprocessor
 disagrees with the statistics in the checkpoint's `policy_postprocessor.json`, the pilot would
 calibrate a different model. Do not reach for `--skip-stats` to get past it; that flag exists for the
 case where the statistics were verified by hand for another reason, and the script says so.
 
-## 8. Step 6 -- the measurement, and the first recorded row
+## 9. Step 7 -- the measurement, and the first recorded row
 
 ```bash
 just smolvla-pilot py=".venv-pilot/bin/python"
@@ -208,32 +246,35 @@ Nothing regenerates a table from pilot rows yet: `scripts/make_tables.py` does n
 is what 5.2 promised. Rows in `results/*.jsonl` are tracked by git; the `.gitignore` rules drop only
 logs, `*.tmp` and `*.partial`.
 
-## 9. The failure ladder
+## 10. The failure ladder
 
 | Symptom | Cause | Next |
 |---|---|---|
-| `[NOT RUN] No module named 'libero'` at precondition 1 | step 4 skipped, or you are on `.venv` | re-run with `py=".venv-pilot/bin/python"` |
-| `EOFError` / a prompt during LIBERO import | no `~/.libero/config.yaml` | step 3 |
+| `[NOT RUN] No module named 'libero'` at precondition 1 | step 1 skipped, or you are on `.venv` | re-run with `py=".venv-pilot/bin/python"` |
+| `[STOP] precondition 3 could not be established` at step 2 | a sidecar that could not be read: network, a rate limit, a moved repo | not a mismatch; re-run, and read the `note` in the printed JSON |
+| `EOFError` / a prompt during LIBERO import | no `~/.libero/config.yaml` | step 4 |
 | `[FAIL] precondition 1 ... GL` / `EGL` / a blank frame | no offscreen GL for MuJoCo | `MUJOCO_GL=egl` first, then `MUJOCO_GL=osmesa`; this is G8 in `docs/02` section 7 and it was never green on this repo's host |
-| `ModuleNotFoundError: robosuite...single_arm_env` | robosuite is 1.5.x, so the pin did not take | re-install `robosuite==1.4.0`; step 2 already checks this |
+| `ModuleNotFoundError: robosuite...single_arm_env` | robosuite is 1.5.x, so the pin did not take | re-install `robosuite==1.4.0`; step 3 already checks this |
 | `FileNotFoundError: ...mujoco.dll` | you are on Windows | not a Linux runbook problem; 11 section 4.4 |
-| `[FAIL] precondition 3 ... differs by N` | the postprocessor is not the checkpoint's statistics | stop; the pilot would calibrate another model |
-| `[FAIL] precondition 2` | checkpoint download incomplete or `transformers` missing | step 7's download, then re-check |
-| `cuda available False` | CPU torch resolved | step 4's verify; do not run |
+| `[FAIL] precondition 3 ... differs by N` | the postprocessor is not the checkpoint's statistics | stop; step 2 exists so this is found before the download |
+| `[FAIL] precondition 2` | checkpoint download incomplete or `transformers` missing | step 5's download, then re-check |
+| `cuda available False` | CPU torch resolved | step 1's verify; do not run |
 
-## 10. What this runbook does not promise
+## 11. What this runbook does not promise
 
 - **It has not been executed.** No Linux host has run it end to end; the pilot has never produced a
   row anywhere (11 section 5.2). What is verified about the pilot is its failure path: `[NOT RUN]`
-  and exit 2 on a host without the stack.
+  and exit 2 on a host without the stack -- plus precondition 3, which step 2 runs on any host and
+  which was `[ok]` at 7.45e-09 on the repo's Windows host. What step 2 therefore adds on Linux is a
+  repeat of that check on the stack the measurement would use, not the check's first run.
 - **Two steps are inference, not observation.** That `libero==0.1.1` resolves on Linux without
   `--no-deps` follows from `egl-probe` needing build headers (present on Linux, absent on Windows);
   and that `robosuite==1.4.0` pulls a `mujoco` that this card can render offscreen is the ordinary
-  Linux story rather than a measured one here. Both fail at step 1 or step 2 -- loudly, before the
+  Linux story rather than a measured one here. Both fail at step 1 or step 3 -- loudly, before the
   download -- which is why they are ordered before it.
 - **It does not decide anything the pilot cannot.** 5.2's list stands: not the block's discordance,
   not RTC's benefit, not SmolVLA's success rate, and not another card's per-chunk cost. Running this
   twice on two cards is two measurements, not one transferred number.
-- **It is not a one-command script.** The install block in step 4 is meant to be pasted, and no
+- **It is not a one-command script.** The install block in step 1 is meant to be pasted, and no
   committed script backs it yet; the repo has `scripts/build_lerobot_env.sh` for the PushT control
   env and nothing for the LIBERO stack.

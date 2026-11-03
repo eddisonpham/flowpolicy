@@ -41,6 +41,7 @@ __all__ = [
     "BuffersNorm",
     "Normalization",
     "ProcessorsNorm",
+    "check_processor_files",
     "config_id_marks_path",
     "denormalize_action",
     "flatten_history",
@@ -219,14 +220,21 @@ def named_sidecars(config: dict[str, Any]) -> list[str]:
     ]
 
 
-def load_processor_norm(directory: str | Path, *, device: str = "cuda") -> ProcessorsNorm:
-    """Build `ProcessorsNorm` from a migrated checkpoint directory.
+def check_processor_files(directory: str | Path) -> list[str]:
+    """The sidecars this checkpoint directory must hold, or the `FileNotFoundError` naming one.
 
-    Needs `lerobot` (this project's lockfile does not contain it: it caps torch < 2.12, R13), so
-    the import is local and the failure names the recipe that installs it.
+    A migrated directory is four names plus whatever its processor JSONs point at, and the second
+    half is the half that is easy to lose: `policy_preprocessor.json` names
+    `..._step_3_normalizer_processor.safetensors` and the postprocessor names `..._step_0_...`, so
+    the file names cannot be derived from the JSONs and have to be read. `lerobot` loads a pipeline
+    whose `state_file` is absent *with no statistics at all*, i.e. as the identity -- it does not
+    fail, so a directory in that state runs and scores an unnormalized policy.
+
+    Public because three readers other than `load_processor_norm` need the same verdict: the
+    migration that produces the directory, the control's row writer, and `lerobot_control.sh`.
+    Returns the names it checked, in step order, so a caller can print what it proved instead of a
+    bare "ok".
     """
-    # The files come first: a missing sidecar is a checkpoint problem that has nothing to do with
-    # which lerobot is installed, and CI has no lerobot to blame.
     root = Path(directory)
     required = ("policy_preprocessor.json", "policy_postprocessor.json")
     missing = [name for name in required if not (root / name).is_file()]
@@ -235,18 +243,32 @@ def load_processor_norm(directory: str | Path, *, device: str = "cuda") -> Proce
             f"{root} has no {missing}; run `just lerobot-control` once to build the processors "
             "(scripts/lerobot_migrate.py)"
         )
-    # The JSONs are not self-contained: each named step keeps its numbers in a sidecar. A pipeline
-    # that loads without them is the identity -- it would run, and the two implementations would
-    # then "disagree" by whatever the unnormalizer was supposed to contribute.
+    checked: list[str] = []
     for name in required:
         config = json.loads((root / name).read_text(encoding="utf-8"))
-        absent = [f for f in named_sidecars(config) if not (root / f).is_file()]
+        sidecars = named_sidecars(config)
+        absent = [f for f in sidecars if not (root / f).is_file()]
         if absent:
             raise FileNotFoundError(
                 f"{root / name} keeps its statistics in {absent}, which {root} does not have; "
                 "the pipelines would load with no statistics at all. Re-run "
                 "`just lerobot-control` (scripts/lerobot_migrate.py)"
             )
+        checked.extend(sidecars)
+    return checked
+
+
+def load_processor_norm(directory: str | Path, *, device: str = "cuda") -> ProcessorsNorm:
+    """Build `ProcessorsNorm` from a migrated checkpoint directory.
+
+    Needs `lerobot` (this project's lockfile does not contain it: it caps torch < 2.12, R13), so
+    the import is local and the failure names the recipe that installs it.
+    """
+    # The files come first: a missing sidecar is a checkpoint problem that has nothing to do with
+    # which lerobot is installed, and CI has no lerobot to blame. Shared with the producer and the
+    # control's own gates, so a directory one of them accepts is a directory all of them accept.
+    root = Path(directory)
+    check_processor_files(root)
 
     # Local import: the hint lives next to the rest of the backend's error text, and importing
     # `pretrained` at module scope here would be a cycle.
