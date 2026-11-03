@@ -48,6 +48,12 @@ def main() -> None:
     args = parser.parse_args()
     if not str(args.ckpt).startswith("hf:") and not args.train_seeds:
         parser.error("--train-seeds is required for trained checkpoints")
+    # An empty block reaches `evaluate` with no seeds, appends nothing, and then averages an empty
+    # array -- a `nan` success rate that reads like a policy result rather than a typo.
+    if args.episodes < 1:
+        parser.error("--episodes must be >= 1")
+    if args.workers < 1:
+        parser.error("--workers must be >= 1")
 
     seeds = list(range(args.seed_start, args.seed_start + args.episodes))
     rows = evaluate(

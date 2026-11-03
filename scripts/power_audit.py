@@ -88,6 +88,29 @@ def main() -> None:
         discordance = (a_only + b_only) / n
         delta = (b_only - a_only) / n
         p = mcnemar_exact(a_only, b_only)
+        if discordance == 0:
+            # No episode changed hands: the runs agree exactly, so there are no discordant pairs
+            # for a paired test and no effect this block could resolve. `resolvable_effect`
+            # rejects discordance 0, which is why this case is answered rather than computed.
+            print(
+                f"{label:<52s} {n:>4d} {0:>5d} {0.0:>5.2f} {delta * 100:>+6.1f} "
+                f"{p_text(p):>10s} {'agree exactly':>9s}"
+            )
+            rows.append(
+                {
+                    "comparison": label,
+                    "a": path_a,
+                    "b": path_b,
+                    "n": n,
+                    "discordant": {"a_only": a_only, "b_only": b_only},
+                    "discordance": 0.0,
+                    "delta_pp": 0.0,
+                    "mcnemar_p": p,
+                    "resolves_pp": None,
+                    "uninformative_null": False,
+                }
+            )
+            continue
         mde = resolvable_effect(n, discordance)
         rows.append(
             {

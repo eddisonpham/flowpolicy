@@ -90,7 +90,15 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     rates: list[float] = []
     for path, run in zip(paths, runs, strict=True):
+        # A rows file that exists but holds nothing is a crashed run, not a 0 % one: dividing by
+        # it would raise, and recording it would drag the mean down with a run that never scored.
+        if not run:
+            print(f"{path!s:40s} skipped (empty file: the run wrote no rows)")
+            continue
         shared = len(set(ours) & set(run))
+        if shared == 0:
+            print(f"{path!s:40s} skipped (no seeds shared with {args.ours})")
+            continue
         hits = int(sum(run.values()))
         rate = hits / len(run)
         both, ours_only, theirs_only, neither = paired_counts(ours, run)
@@ -119,6 +127,8 @@ def main() -> None:
             }
         )
 
+    if not rates:
+        raise SystemExit(f"none of {len(paths)} control files could be read; nothing to summarise")
     mean_rate = statistics.fmean(rates)
     sd_rate = statistics.stdev(rates) if len(rates) > 1 else float("nan")
     lo_t, hi_t = t_interval(rates)
