@@ -26,6 +26,9 @@ venv/
 .venv-lerobot/
 # The V4 feasibility probe (docs/11 section 4.4): LIBERO's stack, kept out of `.venv` on purpose.
 .venv-libero/
+# The pilot interpreter (docs/12): lerobot 0.6.1 caps torch<2.12 while `.venv` pins 2.14.1, so the
+# measurement needs its own env rather than a resolve that would move the pinned stack.
+.venv-pilot/
 # Migrated checkpoint + rendered control videos: rebuilt by scripts/lerobot_migrate.py.
 checkpoints/diffusion_pusht_migrated/
 # Renders lerobot writes into each control output dir; the rows are the measurement, the mp4s are not.

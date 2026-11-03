@@ -9,6 +9,113 @@
 | Evidence | `just verify` green (2026-11-01: ruff, ruff format, mypy strict on 32 files, 141 CPU unit tests, 1 smoke test, generated tables/README byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/`; the leftover gate in `results/smolvla_leftover_probe.json` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
+## What changed on 2026-11-02 (precondition 3 verified here; equiv preflight fixed)
+
+**Precondition 3 is now `[ok]` on this host.** `scripts/smolvla_pilot.py --stats-only --device cpu`
+builds the postprocessor from the checkpoint's JSON and probes it without LIBERO, `transformers` or
+a GPU: MEAN_STD, 7 dims, max |diff| **7.45e-09** against a 1e-05 bar. Settled: the postprocessor the
+pilot would use reproduces `action.mean` / `action.std`. **Not** settled: precondition 1, precondition
+2, the 28-chunk episode, the per-chunk cost, 5.1's band. No row was produced.
+
+- `load_processor_norm` checked that the two processor JSONs exist but not the `state_file` sidecar
+each names (preprocessor `step_3_`, postprocessor `step_0_` -- read, since the index is incidental).
+A directory missing those would load both pipelines with no statistics, i.e. as the identity, and
+`scripts/processor_equiv.py` would then report a disagreement that was really a missing file. The
+preflight now follows `named_sidecars()` before the lerobot import, so CI sees `FileNotFoundError`.
+- Six tests in `tests/unit/test_normalization_protocol.py` pin the real JSON layout.
+- Evidence: `just verify` scope green on 2026-11-02 -- ruff format, ruff check, 162 CPU unit tests.
+
+## What changed on 2026-11-02 (precondition 3 could not have passed; now tested)
+
+A CPU test for the statistics probe required reading the checkpoint it probes, and the probe was
+broken in three ways. **No GPU time, no rows.** The pilot is still unrun.
+
+- `policy_postprocessor.json` on `HuggingFaceVLA/smolvla_libero` carries no statistics: they are
+  `action.mean` / `action.std` in `policy_postprocessor_step_1_unnormalizer_processor.safetensors`.
+  The probe scanned the JSON, so it could only return `not run`, which `main` turns into `[STOP]`
+  and exit 1. It now follows the step's `state_file`.
+- It probed at `max_action_dim` (32) against a 7-wide pipeline; the width now comes from the JSON's
+  ACTION feature.
+- MIN_MAX's inverse in `normalize_processor.py` is `(z + 1) / 2 * (max - min) + min`, so 0 is the
+  midpoint and the probe's "0 is min" assumption would have rejected a correct pipeline. It now
+  probes -1 / 0 / 1 for the range modes.
+- Eight tests in `tests/unit/test_smolvla_pilot.py` write the real sidecar layout and drive a fake
+  pipeline: a 0.01 % std error reads `mismatch`, the 0-is-min inverse reads `mismatch`, a missing
+  `action.mean` reads `not run`. The first of those three was invisible before.
+
+## What changed on 2026-11-02 (the Linux path is a runbook; still no row)
+
+`docs/12_linux_runbook.md` takes a fresh Linux machine from preflight to the pilot's first recorded
+row. **Not executed** -- there is no Linux host here -- so no row, no per-chunk number and no change
+to 5.1's band. Section 10 of the runbook names the two steps that are inference rather than
+observation (LIBERO's Linux resolution, and whether robosuite 1.4.0's mujoco renders offscreen here)
+and why both fail before the download.
+
+- `scripts/smolvla_pilot.py` is unchanged and still has never measured anything. What the runbook
+  adds is the order: pin check (`[PINNED ]`, seconds, no network) -> LIBERO's config file -> the 2 GB
+  checkpoint -> the three preconditions -> the 28-chunk episode, so the cheap failures happen first.
+- One new repo rule: `.venv-pilot/` is gitignored like the other two side envs, because the pilot
+  needs lerobot, `transformers` and robosuite 1.4.0 in one interpreter while `.venv` pins a torch
+  lerobot refuses.
+
+## What changed on 2026-11-01 (the pilot script exists; its preconditions are the gate)
+
+5.2's owed script is written: `scripts/smolvla_pilot.py`, `just smolvla-pilot` /
+`just smolvla-pilot-check`. **Not run** -- it needs lerobot, `transformers` and `robosuite==1.4.0`
+in one interpreter, which is exactly the platform decision 5.1 leaves open -- so no row and no
+number were produced, and none is claimed.
+
+- **The ladder is enforced, not documented.** Exit 1 is a precondition that failed (env, checkpoint,
+  or the postprocessor disagreeing with the checkpoint's own statistics at 1e-5 -- 4.4's step 1,
+  which stops the run because a different model would be calibrated). Exit 2 is "cannot run here",
+  which is what this host does: `[NOT RUN]` plus the missing module.
+- **Three would-be-silent errors are hard errors.** A chunk shorter than the cadence (one action =
+  a different loop); actions outside LIBERO's `[-1, 1]` (unnormalized chunk, plausible timing row,
+  arm never moved); and a repeat that starts from initial state 1 because `LiberoEnv.reset`
+  advances `init_state_id` -- now pinned back, so the stability repeat repeats the same episode.
+- **What it will produce.** Per-chunk policy / build / env time with mean-median-p95-max, episode
+  wall, peak VRAM, first-call index, p95 drift against the first five chunks, and the 500-episode
+  and three-arm GPU-hour projections 5.1 currently states as a band. Rows: `kind: pilot` in
+  `results/smolvla_pilot.jsonl`.
+
+## What changed on 2026-11-01 (the spending framing audited out of the remaining docs)
+
+The earlier correction landed in `docs/11` section 5.1 only, so eight more passages that framed a
+capability as something to obtain were found by grep and rewritten. **No code, no GPU time, no new
+rows.**
+
+- **`docs/11`, seven passages.** Section 0: "not adoptable at any price this repo is willing to pay"
+  -> "the limit is the machine, not a willingness to obtain one". Section 1: "worth renting a GPU
+  for" -> "need a 14-22 GB card". Sections 4.3, 4.4, 4.4's verdict and 7: "rented GPU" -> "a Linux
+  machine with a CUDA card" / "a 14 GB-class card". Section 5: `24-48 GB` -> `14-48 GB`, because the
+  old range contradicted the memory column directly above it, which has π0 at 14 GB. Section 5's
+  heading: "the honest cost" -> "what that forces", since the cost there is compute.
+- **`docs/09`, one currency figure.** "$0 of that came from the high-risk options" -> "None of that
+  came from", the same claim without a price attached.
+- **Left alone on purpose.** The dated entries in `CHANGELOG.md` and the dated sections of this file
+  keep their original "priced"/"rented" wording: they record the reasoning of that day, and editing
+  them would hide that the framing was wrong for a day.
+- **Checked with a grep.** `rent|price|afford|dollars|\$[0-9]` over README, the model card,
+  `docs/00`-`docs/11` and `ARCHITECTURE.md` returns only wall-clock uses and the changelog's own
+  description of this correction.
+
+## What changed on 2026-11-01 (the cost table becomes a hardware table; the walk becomes a gate)
+
+Three corrections and one new script. **No GPU time, no episodes, no new rows.**
+
+- **`docs/11` 5.1 stopped pricing and started specifying.** The column that mattered is the machine's
+  shape -- OS, disk, card, compute -- not its invoice. Currency figures are gone from the section and
+  the memory-versus-OS distinction is explicit: measured peaks are 1189 MiB fp32 / 710 MiB bf16 for
+  a 262.7 M policy at N=10 (E8), so the 8 GB card is *not* the exclusion; Windows being unable to
+  load `robosuite==1.4.0` is. Nothing in the repo references money (grep: four Markdown files, no
+  script, config or dependency).
+- **`docs/11` 5.2 plans the pilot instead of estimating harder.** One episode (28 chunks) replaces
+  150 / 250 / 700 ms with a measurement: preconditions, recorded fields, stop rules, and the things
+  it cannot decide (success, discordance, RTC) are written down. Owed: `scripts/smolvla_pilot.py`.
+- **`scripts/libero_port_walk.py` makes 4.5 checkable.** `just port-walk` reproduces the five-wall
+  ladder and both stopping points, writes `results/libero_port_walk.json`, and exits 1 on drift --
+  the case where a disappeared wall silently invalidates the 2-4 day estimate.
+
 ## What changed on 2026-11-01 (V4 attempted: the LIBERO wall is the platform, not the install)
 
 V4 was the last unmeasured cost in `docs/11` section 6, so it was attempted in an isolated env
@@ -88,11 +195,11 @@ was written, no third-party file was edited.
   LIBERO dispatches through `ROBOT_CLASS_MAPPING["MountedPanda"] = SingleArm`, so the port must
   re-express two robot models *and* translate their controller configs -- **2-4 days, estimated**,
   ending on a stack nobody else runs. `docs/11` 4.5.
-- **The Linux path costs half a day and about ten dollars.** `robosuite==1.4.0` is the combination
+- **The Linux path needs half a day and no extra hardware.** `robosuite==1.4.0` is the combination
   LIBERO declares, so all five walls vanish; setup is `uv` + LIBERO from source + a 2 GB checkpoint.
-  At 2026-11 marketplace rates (4090 $0.34-0.69/hr, A100 $1.19-1.39/hr) the block bills **$3-10**. The
-  conclusion inverts the intuition: the GPU is a rounding error, the platform is the decision.
-  `docs/11` 5.1.
+  The deciding variable is the OS, not the card: this 8 GB laptop is excluded because the pin cannot
+  load on Windows, while the measured memory anchors (1189 MiB fp32 / 710 MiB bf16 for a 262.7 M
+  policy at N=10, E8) put a 450 M policy inside 8 GB [E]. `docs/11` 5.1.
 - **The block is now costed in GPU-hours, from a stated band.** 500 episodes at a 10-action cadence
   is 28 chunks each; at 150 / 250 / 700 ms per chunk that is 1.4 / 1.75 / 3.5 h per arm, so three arms
   plus the naive re-baseline and a pilot land at **6-9 h central, ~25 h pessimistic**. The per-chunk

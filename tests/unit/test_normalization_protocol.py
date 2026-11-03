@@ -9,6 +9,8 @@ history reshape, because `[B, T]` and `[T, B]` hold the same number of elements 
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,6 +22,8 @@ from policybench.models.normalization import (
     config_id_marks_path,
     denormalize_action,
     flatten_history,
+    load_processor_norm,
+    named_sidecars,
     normalize_image,
     normalize_state,
     override_processor_device,
@@ -148,3 +152,114 @@ def test_non_default_path_must_be_visible_in_config_id() -> None:
     assert config_id_marks_path("dp_published_n200", "buffers")
     assert config_id_marks_path("dp_proc_n600", "processors")
     assert not config_id_marks_path("dp_published_n200", "processors")
+
+
+# The migrated checkpoint's processor JSONs, field for field from
+# `checkpoints/diffusion_pusht_migrated/` (that directory is gitignored, so the layout is kept
+# here and read from no file). Both carry their statistics the same way: the step names a
+# `.safetensors` sibling and the JSON holds only the mode and the feature widths.
+_FEATURES: dict[str, Any] = {
+    "observation.image": {"type": "VISUAL", "shape": [3, 96, 96]},
+    "observation.state": {"type": "STATE", "shape": [2]},
+    "action": {"type": "ACTION", "shape": [2]},
+}
+_NORM_MAP = {"ACTION": "MIN_MAX", "STATE": "MIN_MAX", "VISUAL": "MEAN_STD"}
+_REAL_PREPROCESSOR: dict[str, Any] = {
+    "name": "policy_preprocessor",
+    "steps": [
+        {"registry_name": "rename_observations_processor", "config": {"rename_map": {}}},
+        {"registry_name": "to_batch_processor", "config": {}},
+        {"registry_name": "device_processor", "config": {"device": "cuda", "float_dtype": None}},
+        {
+            "registry_name": "normalizer_processor",
+            "config": {"eps": 1e-08, "features": _FEATURES, "norm_map": _NORM_MAP},
+            "state_file": "policy_preprocessor_step_3_normalizer_processor.safetensors",
+        },
+    ],
+}
+_REAL_POSTPROCESSOR: dict[str, Any] = {
+    "name": "policy_postprocessor",
+    "steps": [
+        {
+            "registry_name": "unnormalizer_processor",
+            "config": {"eps": 1e-08, "features": _FEATURES, "norm_map": _NORM_MAP},
+            "state_file": "policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+        },
+        {"registry_name": "device_processor", "config": {"device": "cpu", "float_dtype": None}},
+    ],
+}
+
+
+def test_the_real_processor_json_carries_no_statistics_of_its_own() -> None:
+    # A reader that scans the JSON for mean/min finds nothing on either file and concludes "no
+    # normalization" -- a different model, loaded without complaint. The numbers are in the
+    # sidecar the step names, and the two sidecars sit at different step indices (`step_3_` on
+    # the preprocessor, `step_0_` on the postprocessor).
+    for config in (_REAL_PREPROCESSOR, _REAL_POSTPROCESSOR):
+        text = json.dumps(config)
+        assert '"stats"' not in text
+        assert "mean" not in text and "min" not in text  # norm_map's MIN_MAX is uppercase
+    assert named_sidecars(_REAL_PREPROCESSOR) == [
+        "policy_preprocessor_step_3_normalizer_processor.safetensors"
+    ]
+    assert named_sidecars(_REAL_POSTPROCESSOR) == [
+        "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+    ]
+
+
+def test_named_sidecars_reads_the_name_instead_of_deriving_it() -> None:
+    config = {
+        "steps": [
+            {
+                "registry_name": "normalizer_processor",
+                "config": {},
+                "state_file": "a_step_7_x.safetensors",
+            },
+            {"registry_name": "device_processor", "config": {"device": "cpu"}},
+        ]
+    }
+    # `step_7_` at index 0: a name assembled from the step's position would miss the real file.
+    assert named_sidecars(config) == ["a_step_7_x.safetensors"]
+
+
+def test_named_sidecars_is_empty_for_a_config_without_steps() -> None:
+    assert named_sidecars({"name": "policy_preprocessor"}) == []
+    assert named_sidecars({"steps": "not-a-list"}) == []
+
+
+def _write_processors(root: Path, *, with_sidecars: bool) -> None:
+    for name, config in (
+        ("policy_preprocessor.json", _REAL_PREPROCESSOR),
+        ("policy_postprocessor.json", _REAL_POSTPROCESSOR),
+    ):
+        (root / name).write_text(json.dumps(config), encoding="utf-8")
+        if with_sidecars:
+            for sidecar in named_sidecars(config):
+                (root / sidecar).write_text("", encoding="utf-8")  # existence is the check
+
+
+def test_a_missing_sidecar_is_named_before_lerobot_is_imported(tmp_path: Path) -> None:
+    # Both JSONs present, the file they point at absent: the state the preflight exists for. It
+    # must be this error and not `ImportError` -- CI has no lerobot, and a checkpoint problem that
+    # gets reported as a missing library is a wasted afternoon.
+    _write_processors(tmp_path, with_sidecars=False)
+    with pytest.raises(FileNotFoundError, match=r"normalizer_processor\.safetensors"):
+        load_processor_norm(tmp_path)
+
+
+def test_a_directory_without_the_processor_json_is_refused_by_name(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match=r"policy_preprocessor\.json"):
+        load_processor_norm(tmp_path)
+
+
+def test_override_processor_device_keeps_the_sidecar_and_the_declared_mapping() -> None:
+    # docs/10 condition 4: the override may move the device step and nothing else. Dropping
+    # `state_file` while rebuilding a step would load the pipeline with no statistics, and
+    # rewriting `norm_map` would change the declared mapping the gate is meant to compare.
+    out = override_processor_device(_REAL_PREPROCESSOR, "cpu")
+    assert named_sidecars(out) == named_sidecars(_REAL_PREPROCESSOR)
+    assert out["steps"][2]["config"]["device"] == "cpu"
+    assert out["steps"][3]["config"]["norm_map"] == _NORM_MAP
+    assert out["steps"][3]["state_file"] == (
+        "policy_preprocessor_step_3_normalizer_processor.safetensors"
+    )

@@ -1,0 +1,35 @@
+{
+  "robosuite": "1.5.2",
+  "verdict": "ladder intact",
+  "walls": [
+    {
+      "id": "1",
+      "present": "true",
+      "observed": "module absent"
+    },
+    {
+      "id": "2",
+      "present": "true",
+      "observed": "no `mount_types`; got self, robots, env_configuration, controller_configs, base_types, gripper_types, initialization_noise, use_camera_obs ..."
+    },
+    {
+      "id": "3",
+      "present": "true",
+      "observed": "robot module absent"
+    },
+    {
+      "id": "4",
+      "present": "true",
+      "observed": "absent; `load_part_controller_config` present"
+    },
+    {
+      "id": "5",
+      "present": "true",
+      "observed": "defaults to True"
+    }
+  ],
+  "stage_0": "ModuleNotFoundError: No module named 'robosuite.environments.manipulation.single_arm_env'",
+  "stage_1": "KeyError: 'MountedMountedPanda'",
+  "drift": [],
+  "probe_incomplete": []
+}

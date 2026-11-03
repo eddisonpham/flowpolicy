@@ -20,6 +20,7 @@ observations and actions still cross every boundary in raw units (docs/ARCHITECT
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -44,6 +45,7 @@ __all__ = [
     "denormalize_action",
     "flatten_history",
     "load_processor_norm",
+    "named_sidecars",
     "normalize_image",
     "normalize_state",
     "override_processor_device",
@@ -197,12 +199,55 @@ def override_processor_device(config: dict[str, Any], device: str) -> dict[str, 
     return out
 
 
+def named_sidecars(config: dict[str, Any]) -> list[str]:
+    """The sidecar each step names in its `state_file`, in order.
+
+    lerobot's processor JSONs carry the *mode* and the feature widths; the numbers themselves live
+    in a sibling `.safetensors` file whose name the step spells out -- `step_3_` on the
+    preprocessor, `step_0_` on the postprocessor, so the index is incidental and must be read, not
+    derived. A directory holding the JSONs but not the files they name is a checkpoint whose
+    normalization has silently become the identity, which is why the preflight follows these
+    names instead of listing the two JSONs.
+    """
+    steps = config.get("steps")
+    if not isinstance(steps, list):
+        return []
+    return [
+        step["state_file"]
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("state_file"), str)
+    ]
+
+
 def load_processor_norm(directory: str | Path, *, device: str = "cuda") -> ProcessorsNorm:
     """Build `ProcessorsNorm` from a migrated checkpoint directory.
 
     Needs `lerobot` (this project's lockfile does not contain it: it caps torch < 2.12, R13), so
     the import is local and the failure names the recipe that installs it.
     """
+    # The files come first: a missing sidecar is a checkpoint problem that has nothing to do with
+    # which lerobot is installed, and CI has no lerobot to blame.
+    root = Path(directory)
+    required = ("policy_preprocessor.json", "policy_postprocessor.json")
+    missing = [name for name in required if not (root / name).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"{root} has no {missing}; run `just lerobot-control` once to build the processors "
+            "(scripts/lerobot_migrate.py)"
+        )
+    # The JSONs are not self-contained: each named step keeps its numbers in a sidecar. A pipeline
+    # that loads without them is the identity -- it would run, and the two implementations would
+    # then "disagree" by whatever the unnormalizer was supposed to contribute.
+    for name in required:
+        config = json.loads((root / name).read_text(encoding="utf-8"))
+        absent = [f for f in named_sidecars(config) if not (root / f).is_file()]
+        if absent:
+            raise FileNotFoundError(
+                f"{root / name} keeps its statistics in {absent}, which {root} does not have; "
+                "the pipelines would load with no statistics at all. Re-run "
+                "`just lerobot-control` (scripts/lerobot_migrate.py)"
+            )
+
     # Local import: the hint lives next to the rest of the backend's error text, and importing
     # `pretrained` at module scope here would be a cycle.
     from policybench.models.pretrained import _BACKEND_HINT
@@ -222,15 +267,6 @@ def load_processor_norm(directory: str | Path, *, device: str = "cuda") -> Proce
         raise ImportError(
             "no processor pipeline class in lerobot.processor.pipeline; docs/02 section 3.4 pins "
             "lerobot 0.6.1, so this is a version change, not a configuration problem"
-        )
-
-    root = Path(directory)
-    required = ("policy_preprocessor.json", "policy_postprocessor.json")
-    missing = [name for name in required if not (root / name).is_file()]
-    if missing:
-        raise FileNotFoundError(
-            f"{root} has no {missing}; run `just lerobot-control` once to build the processors "
-            "(scripts/lerobot_migrate.py)"
         )
 
     pre = pipeline_cls.from_pretrained(str(root), config_filename="policy_preprocessor.json")

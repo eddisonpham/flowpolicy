@@ -23,9 +23,9 @@ Three rules follow from the precedent already in the tree, and they are the whol
    policy servers now (openpi websocket, GR00T ZMQ, `lerobot` gRPC). What stays ours is the thing
    none of them have: paired, seed-exact, interval-bearing numbers for the same episodes.
 
-The corollary matters for scoping: a model that cannot be run on this host's 8 GB GPU or a
-rented 24 GB card, and has no published simulation cell to check against, is not adoptable at
-any price this repo is willing to pay.
+The corollary matters for scoping: a model that fits neither this host's 8 GB GPU nor a
+24 GB card, and has no published simulation cell to check against, is not adoptable here --
+the limit is the machine, not a willingness to obtain one.
 
 ## 1. Landscape, 2026-10-30
 
@@ -46,9 +46,10 @@ Filtered to open weights with an action-chunk interface and a published sim resu
 | X-VLA, Wall-X, MolmoAct2, LingBot-VA, VLA-JEPA, EVO1, FastWAM, multi_task_dit | varies | varies | varies | varies | varies | mostly no | varies | **shipped in lerobot 0.6.1** [V] |
 | π*0.6 (RECAP) | 3.6 B | **not released** [U] | as π0.5 | 50 | — | no | laundry / espresso throughput [S] | — |
 
-Two rows decide everything on this hardware: **SmolVLA is the only VLA that fits**, and
-**π0/π0.5/GR00T are the ones worth renting a GPU for** because their published cells are the
-only external checks strong enough to falsify an adapter.
+Two rows decide everything on this hardware: **SmolVLA is the only VLA that fits 8 GB**, and
+**π0/π0.5/GR00T are the ones that need a 14-22 GB card** because their published cells are the
+only external checks strong enough to falsify an adapter -- which is why section 5's hardware
+question exists rather than being an optional upgrade.
 
 ## 2. The model zoo is already a dependency
 
@@ -189,7 +190,7 @@ they are recorded here so the option is not re-proposed as cheap:
    a floor.
 
 So a like-for-like RTC-vs-cross-fade row requires a **second policy**, which is V3 below (SmolVLA
-on LIBERO, a rented GPU, and V4's environment work first). What remains true and useful: the
+on LIBERO, a Linux machine with a CUDA card, and V4's environment work first). What remains true and useful: the
 cross-fade's measured separation -- coverage up, success flat against temporal ensembling -- is
 unchanged, and RTC is now correctly scoped as a property of flow policies rather than a gap in
 this repo's chunking strategy.
@@ -197,7 +198,7 @@ this repo's chunking strategy.
 ### 4.4 RTC on SmolVLA: what has to exist before it is runnable here
 
 Scoped 2026-11-01 by reading the installed package and the published checkpoint's config. The answer is
-better than section 4.3 predicted in one respect and narrower than "rent a GPU and go" in another:
+better than section 4.3 predicted in one respect and narrower than "move to a Linux box and go" in another:
 **SmolVLA's RTC loop is reachable through `predict_action_chunk`, which is the method `PolicyLike`
 already wraps**, so no sampler work is needed -- the obstruction in 4.3 is about our adapters driving
 *our* diffusion samplers, not about upstream flow policies.
@@ -230,7 +231,7 @@ Two consequences that change the shape of the option rather than its size:
    chunk-reusing cadence is a departure from the checkpoint's published recipe, so "RTC beats naive"
    must be compared against naive *at the new cadence on the same episodes*. Otherwise the row measures
    a harness difference dressed as a strategy difference -- the failure `docs/10` was written about.
-2. **The unpriced term is SmolVLA's per-chunk cost on this GPU.** E9's 181 ms (N=10, CUDA graph) and
+2. **The unmeasured term is SmolVLA's per-chunk cost on this GPU.** E9's 181 ms (N=10, CUDA graph) and
    417 ms (DDIM@10) are a 263 M diffusion policy; a 450 M policy with a 500 M VLM prefill resized to
    512x512 has no measured anchor here, and the 13-chunks-per-episode unit cost was measured on 300-step
    PushT episodes, not on LIBERO. One measured episode is the pilot that turns the block into GPU-hours;
@@ -292,7 +293,7 @@ predicted: `transformers` installs and MuJoCo renders, while the env layer needs
 `BDDLBaseDomain` onto `ManipulationEnv` -- an adapter inside a third party's environment, which rule 2
 forbids -- *or* a Linux box, where robosuite 1.4.0's DLL/EGL story is the ordinary one and
 `egl-probe` finds the headers it wants. That is a platform decision, and it belongs with section 5's
-rented-GPU question rather than with V3.
+hardware question rather than with V3.
 
 **Verdict:** V3 is blocked on the task environment, which is now a *platform* problem rather than an
 install one: `transformers` is not a blocker and offscreen rendering works here, but LIBERO's env
@@ -304,8 +305,11 @@ adapter's own unit contract, by contrast, is already decided and passing (the ga
 
 Section 4.4's verdict needs a port of `BDDLBaseDomain` onto `ManipulationEnv`, which rule 2 forbids.
 "Forbids" is a policy; how large the port is happens to be measurable, so it was walked in
-`.venv-libero` with a ~60-line shim living outside the third party (scratch, not committed) to find
-the real seam. Five walls, roughly in dependency order [V, all five observed today]:
+`.venv-libero` with a ~60-line shim living outside the third party to find the real seam. Five walls,
+roughly in dependency order [V, all five observed today] -- and since 2026-11-01 the walk is a script
+rather than a scratch file: `scripts/libero_port_walk.py` (`just port-walk`) re-checks all five and
+exits non-zero if any of them has drifted, because a wall that quietly disappears invalidates the
+2-4 day figure below.
 
 | # | Wall | Exact failure | Size if it were the only one |
 |---|---|---|---|
@@ -334,12 +338,12 @@ number measured on a stack nobody else runs. On Linux all five walls vanish at o
 alternative to the platform change; it is the expensive one. **Do not port; pick the platform**
 (section 5.1).
 
-## 5. Fit against this host, and the honest cost
+## 5. Fit against this host, and what that forces
 
 This is one Windows 11 laptop with an RTX 5060 (8 GB) [V, README]. Consequences:
 
 - **π0, π0.5, π0-FAST, GR00T N1.7, OpenVLA-OFT: not runnable here.** 14 GB at inference for π0
-  is not a tuning problem. Any arm using them needs a rented 24-48 GB GPU, and the numbers stop
+  is not a tuning problem. Any arm using them needs a 14-48 GB card, i.e. a different machine, and the numbers stop
   being "one consumer GPU" -- which is currently the README's strongest framing.
 - **SmolVLA: runnable**, but there is no SmolVLA checkpoint for PushT, and fine-tuning one is
   ~4 h on an A100 [V, lerobot docs] -- out of scope by rule 1, and out of reach on 8 GB.
@@ -353,21 +357,22 @@ This is one Windows 11 laptop with an RTX 5060 (8 GB) [V, README]. Consequences:
 The uncomfortable conclusion, stated plainly: **"use actual SOTA models" and "one 8 GB laptop"
 are not simultaneously satisfiable for anything above SmolVLA.** Either the wrapper demonstrates
 generality on SmolVLA plus the two PushT checkpoints already in `results/`, or the next stage
-rents a GPU and the README's hardware claim changes. That choice is the user's, and it should
+moves to a machine with a larger card and the README's hardware claim changes. That choice is the user's, and it should
 not be made implicitly by an adapter landing first.
 
-### 5.1 What each path costs, priced
+### 5.1 What each path requires of the machine
 
 The block is the same either way -- LIBERO-Spatial is 10 tasks x 50 initial states = 500 paired
 episodes, which `stats.resolvable_effect` puts at 5.6 pp at 20 % discordance -- so the paths differ
-in setup and in what the resulting number *means*, not in the science.
+in what the machine has to be and in what the resulting number *means*, not in the science.
 
-**GPU-hours, computed from a stated band.** An episode is capped at 280 steps [S, LIBERO's usual eval
+**Compute, computed from a stated band.** An episode is capped at 280 steps [S, LIBERO's usual eval
 cap; the env's own default `horizon` is 1000, so 280 is convention rather than a bound]. At a
-chunk-reusing cadence of 10 actions per chunk that is 28 chunks; SmolVLA's per-chunk cost on a rented
-card has no measurement here, so the band is 150 / 250 / 700 ms -- a 450 M policy and 10 Euler steps
-over two 256x256 views, the middle value the honest guess and the top one this 8 GB laptop. Env
-stepping plus 256x256 rendering adds ~5.6 s per episode at 20 ms/step.
+chunk-reusing cadence of 10 actions per chunk that is 28 chunks; SmolVLA's per-chunk cost has no
+measurement here, so the band is 150 / 250 / 700 ms -- a 450 M policy and 10 Euler steps over two
+256x256 views, the middle value the honest guess and the top one what this 8 GB card manages when it
+samples and renders at once [E]. Env stepping plus 256x256 rendering adds ~5.6 s per episode at
+20 ms/step.
 
 | Per-chunk | s/episode | 500-episode arm | three arms (naive, ensemble, RTC) |
 |---|---|---|---|
@@ -375,33 +380,123 @@ stepping plus 256x256 rendering adds ~5.6 s per episode at 20 ms/step.
 | 250 ms | 12.6 | 1.75 h | 5.3 h |
 | 700 ms | 25.2 | 3.5 h | 10.5 h |
 
-Add the naive re-baseline at the raised cadence that 4.4's consequence 1 requires and a 20-episode
-pilot, and the programme is **6-9 GPU-hours centrally, ~25 h at the pessimistic end**.
+Add the naive re-baseline at the raised cadence that 4.4's consequence 1 requires and the pilot of
+5.2, and the programme is **6-9 GPU-hours centrally, ~25 h at the pessimistic end**.
 
-**Dollars, at 2026-11 marketplace rates** [S, Vast / RunPod / aggregator listings]: RTX 4090
-$0.34-0.69/hr, A100 80 GB $1.19-1.39/hr, H100 $1.99-2.49/hr. A 4090 covers a 450 M policy plus MuJoCo
-rendering, so the bill is **$3-10 central, $9-60 pessimistic**, pilot and repeat included. For scale:
-the repo's own 200-episode DDPM@100 PushT block cost 2 h 58 m on the laptop's own GPU and needed no
-rental at all.
+**Memory is not what excludes this host.** The measured anchors are small: the 262.7 M diffusion
+policy peaks at 1189 MiB in fp32 and 710 MiB in bf16 at N=10 (E8), and SmolVLA's 450 M parameters are
+~0.9 GiB as bf16 weights [E, arithmetic on the parameter count], with activations for two 256x256
+views and a 48-token language prefix on top. Inference therefore fits in 8 GB [E] -- the 8 GB card is
+excluded by the *operating system*, not by memory. That distinction is the whole of section 4.4.
 
-**Person-days, which is where the cost actually is.**
+**What the machine has to be.**
 
-| Path | Setup | GPU | Risk the number is not comparable | Total |
-|---|---|---|---|---|
-| Linux + rented 4090 | 0.5 d: `uv`, `robosuite==1.4.0`, LIBERO from source, `LIBERO_CONFIG_PATH`, 2 GB checkpoint | $3-10 | low -- the pin LIBERO itself declares, i.e. the stack the published cell was produced on | **2-3 engineer-days + ~$10** |
-| Windows + port (4.5) | 2-4 d at an architectural seam | $3-10 | **high** -- `lite_physics`, composite controllers and re-expressed robot classes are all departures from that stack | 4-6 days, ending on a stack nobody else runs |
-| Stay on PushT (V3 shelved) | 0 | $0 | n/a | 0, and RTC stays unmeasured: it needs a flow policy with a published success rate |
+| Path | What the machine must be | Compute | This host satisfies it | Risk the number is not comparable | Total |
+|---|---|---|---|---|---|
+| Linux + `robosuite==1.4.0` (LIBERO's own pin) | Linux; ~7 GB of disk (env plus the 2 GB checkpoint); a CUDA card; no port | 6-9 GPU-h | **no: wrong OS** | low -- the pin LIBERO itself declares, i.e. the stack the published cell was produced on | **2-3 engineer-days** |
+| Windows + port (4.5) | Windows; 2-4 days at an architectural seam; no extra hardware | same | yes | **high** -- `lite_physics`, composite controllers and re-expressed robot classes are all departures from that stack | 4-6 days, ending on a stack nobody else runs |
+| Stay on PushT (V3 shelved) | nothing | 0 | yes | n/a | 0, and RTC stays unmeasured: it needs a flow policy with a published success rate |
 
-The priced conclusion inverts the intuition: **the GPU is a rounding error and the platform is the
-decision.** About $10 buys the Linux path; the port costs days and buys a number nobody else can
-check.
+The conclusion is a hardware statement rather than a spending one: **the deciding variable is which
+OS can load LIBERO's pin, and the card is second.** A machine that already runs `robosuite==1.4.0`
+on Linux satisfies the entire requirement; what the port buys instead is 2-4 days of third-party
+environment code ending on a stack nobody else runs. For scale on the compute column, this repo's own
+200-episode DDPM@100 PushT block was 2 h 58 m on the laptop's own card, i.e. the same order as one
+arm of the block above.
+
+### 5.2 The pilot: one episode that replaces the band
+
+The per-chunk band in 5.1 is the only term in the whole cost story that is an extrapolation. It is
+replaced by **one episode**, which is a cost calibration rather than an eval: n = 1 cannot measure
+success, and is not asked to.
+
+**What is run.** LIBERO-Spatial task 0, initial state 0, the 280-step cap, at the 10-action cadence
+the block will use: one `predict_action_chunk` call, then ten `env.step` calls, which is 28 chunks per
+episode. One episode, one card, the checkpoint the block would evaluate. The pilot calls
+`predict_action_chunk` directly rather than `select_action`, because the chunk call is what a
+10-action cadence does; the published `n_action_steps` (1) is recorded in the row and left alone,
+since a queue-driven `select_action` loop would time a different path than the one being costed.
+
+**What is recorded, per chunk.** Policy time (synchronized around the call), observation build, and
+the batch of 10 `env.step` calls, so the policy share and the environment share are separable; then
+mean / median / p95 / max per chunk, episode wall clock, peak VRAM, GPU name, torch version, and the
+chunk index of the first call (the one that pays warmup or compile).
+
+**Preconditions, in order.** The leftover round trip is already green (`just leftover-probe`). Before
+the pilot: the env constructs on the pinned stack, the checkpoint loads, and the checkpoint's step-0
+postprocessor numbers reproduce against `HuggingFaceVLA/smolvla_libero`'s own statistics -- the check
+4.4 names as step 1. If that last one fails, stop: the pilot would calibrate a different model.
+
+**What the result decides.** Feed the measured mean into 5.1's table and the GPU-hours column becomes
+a measurement instead of three rows. If the mean lands outside 150-700 ms, the table is recomputed
+from it -- that is the pilot working, not failing. Only above ~2 s per chunk does the plan change
+shape, because a 10-action cadence stops being defensible and RTC's premise (a leftover in flight)
+goes with it.
+
+**Stability, since one episode is a small sample.** One episode may sit below thermal steady state,
+so a second repeat is taken if p95 drifts more than 20 % from the first five chunks; the pilot is
+minutes long, so the repeat is nearly free. 28 chunks at the pessimistic 700 ms is 20 s of policy
+plus ~6 s of env plus model load -- **under 15 minutes wall, about 0.004 GPU-hours**, which is why it
+should precede the block rather than be inferred from it.
+
+**What it cannot decide, so nobody reads it as if it did.** The block's discordance (a property of
+episodes, not chunks), RTC's benefit (needs the three-arm comparison), and SmolVLA's success rate.
+Nor does the number transfer to another card: the same 28 chunks have to be run on that card, which
+is another 15 minutes.
+
+**What exists.** `scripts/smolvla_pilot.py` (`just smolvla-pilot`, `just smolvla-pilot-check`) does
+exactly the above and nothing more, plus `--stats-only` for precondition 3 alone: 28 chunks, the three timing terms kept apart, rows tagged
+`kind: pilot` in `results/smolvla_pilot.jsonl`, and a `--check-only` mode for the three
+preconditions alone. Three things in it are deliberately loud rather than quiet, because each would
+otherwise produce a plausible row about the wrong thing: a chunk holding fewer actions than the
+cadence executes is refused (that is a single action, i.e. a different loop); actions outside
+LIBERO's `[-1, 1]` box are refused (an unnormalized chunk would time a policy that never moved the
+arm); and the repeat pins `init_state_id` back to 0, because `LiberoEnv.reset` advances it -- a
+second episode would otherwise be initial state 1 reported as a repeat of the same episode.
+`policybench.eval.latency`'s warmup/synchronize/p95 discipline is reused by convention rather than
+by import: its `static_obs` is a 96x96 PushT tensor, not two 256x256 views with state and language.
+
+**Precondition 3 reads the numbers from the sidecar, because the JSON has none (2026-11-02).** The
+first version scanned `policy_postprocessor.json` for a mean/std pair; the real file carries a
+`norm_map` and a feature width and puts the statistics in
+`policy_postprocessor_step_1_unnormalizer_processor.safetensors` as `action.mean` / `action.std`, so
+it could only ever have returned `[STOP]`. It also probed at `max_action_dim` (32) -- the padded
+model space, which the 7-wide unnormalizer refuses -- and assumed normalized 0 is a MIN_MAX
+feature's minimum when lerobot's inverse `(z + 1) / 2 * (max - min) + min` makes it the midpoint.
+All three are now pinned by CPU tests shaped like the checkpoint's actual files, and only the first
+was visible without them.
+
+**Precondition 3 has now been run on this host; the measurement has not.** `--stats-only --device
+cpu` builds the postprocessor from the checkpoint's own JSON and runs 4.4 step 1 without LIBERO,
+`transformers` or a GPU. On 2026-11-02 it returned `[ok]`: MEAN_STD over 7 dims, max |diff|
+**7.45e-09** against the 1e-05 bar, in under a second apart from the cached download. So the one
+precondition that is arithmetic on the checkpoint's files is settled rather than assumed -- the
+postprocessor the pilot would use reproduces `action.mean` / `action.std` exactly. What is still
+unverified is everything the hardware buys: precondition 1 (the env on the pinned stack),
+precondition 2 (the weights loading), and the 28-chunk episode itself.
+
+**The full run still cannot happen here.** It needs the LIBERO pin, `transformers` and the 2 GB
+checkpoint in one interpreter -- the platform decision 5.1 leaves open -- so on a Windows host it
+prints `[NOT RUN]` with the reason and exits 2, distinct from exit 1 for a precondition that failed
+on a host where the stack exists. That distinction is the whole of its current verification beyond
+the probe: it fails as designed, at the pin, and says so. Its first real run is the first thing the
+Linux path buys, and it decides the `n_action_steps=10` deviation on a measurement rather than on a
+guess.
+
+**The Linux path is now a runbook rather than a list of prerequisites.** `docs/12_linux_runbook.md`
+runs from preflight to the first recorded row: a separate `.venv-pilot` (because `lerobot==0.6.1`
+caps `torch<2.12` and `.venv` pins 2.14.1), the port-walk gate against that interpreter -- which must
+print `[PINNED ]` -- *before* the 2 GB download, LIBERO's `~/.libero/config.yaml` without which the
+import blocks on `input()`, then the three preconditions, then the episode. It has not been executed,
+and its section 10 says which steps are inference rather than observation and why both of them fail
+ahead of the download.
 
 ## 6. Options, sized
 
 | # | Option | Cost | Buys | False if |
 |---|---|---|---|---|
 | V1 | `task` + multi-camera observation amendment, then a generic `PretrainedLeRobotPolicy` keyed off the checkpoint's `config.json` `type` (covers smolvla / pi0 / pi05 / groot with one class) | 1-2 days, **estimated**; 0 GPU-hours, **measured** | The actual "wrap real models" claim, with one adapter instead of four | A published LIBERO cell cannot be reproduced within its own reported interval -- then the wrapper is not policy-agnostic and *that* is the result |
-| V2 | `RemotePolicy` client against openpi websocket / GR00T ZMQ, with a separate transport-inclusive latency table | 1-2 days, **estimated**; the rental **unpriced** | Deployment-honest latency; three servers not maintained by us | The transport number moves by more than the queueing term the server itself reports, i.e. the measurement is about the network, not the policy |
+| V2 | `RemotePolicy` client against openpi websocket / GR00T ZMQ, with a separate transport-inclusive latency table | 1-2 days, **estimated**; the compute **not sized** (a 14 GB server policy is out of reach on 8 GB, section 5) | Deployment-honest latency; three servers not maintained by us | The transport number moves by more than the queueing term the server itself reports, i.e. the measurement is about the network, not the policy |
 | V3 | RTC in-process on a SmolVLA checkpoint, same episodes vs naive / temporal ensemble / our cross-fade. **Not available on the diffusion checkpoint (section 4.3): RTC is flow-only and needs a grad-enabled loop, so a second policy is a prerequisite, not a convenience** | 1 day, **estimated**; block size **computed** (500 episodes -> 5.6 pp at 20 % discordance); GPU-hours now **computed** at 6-9 central / ~25 pessimistic (section 5.1, per-chunk band unmeasured); gated on V4's platform decision | Upgrades the cross-fade limitation into a measured comparison; converges with upstream | RTC does not beat temporal ensembling on success at the same latency -- then conditioning is not the mechanism and `docs/05` was right |
 | V4 | LIBERO as the task arm (needed for V1 at all) | 3-5 days, **estimated**; attempted on 2026-11-01 -- `transformers` and MuJoCo rendering install and work, but LIBERO's pin `robosuite==1.4.0` cannot load on Windows and 1.5.2 lacks `SingleArmEnv` (section 4.4). The port was then walked (4.5): **2-4 days, estimated**, five walls, the last architectural. The Linux alternative is **0.5 setup days + 6-9 GPU-hours, computed** (5.1) | The only place VLA success numbers can be reproduced against a published cell | The env cannot be pinned reproducibly on Windows -- **measured, not expected** (section 4.4): the working render stack is not the stack LIBERO's env layer targets |
 | V5 | Port π0's flow loop onto `fast_sampler` | weeks, **estimated** | Nothing for us | Would violate rule 2 by owning third-party denoiser code; declines itself |
@@ -431,7 +526,7 @@ as a guess.
    GPU hours only after it passes.
 4. **V3, because it is cheap once V1 exists** and it answers a question the repo has already
    asked in public.
-5. **V2 last**, and only with a rented GPU: it is the option that most changes what the README
+5. **V2 last**, and only on a machine with a 14 GB-class card: it is the option that most changes what the README
    promises.
 
 **What would falsify the whole direction:** if V1 cannot reproduce any published VLA cell on any

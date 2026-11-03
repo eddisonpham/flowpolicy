@@ -222,13 +222,13 @@ Why this combination and not a single item: F is the cheapest thing in the batch
 changed how A is allowed to be reported (four post-hoc looks, bar 0.0125, which is exactly what
 stops "the sampler fixes the band" from being written). C was not on the menu as a science item and
 turned out to be the difference between a 3 h block that survives a closed laptop and one that does
-not -- it paid for itself during this batch. B converts an aggregate control into a paired one, so
+not -- it justified itself during this batch. B converts an aggregate control into a paired one, so
 H's eventual verdict can be a McNemar instead of a Fisher test on 134 vs 138. A cost 3 GPU-h and
 bought the one thing no doc could supply: the gap has a size per component (7 + 8 pp), a location
 (the 1100-1149 band) and an honest null in the other two bands.
 
 The ordering is the point. A alone would have produced "59 %, still not 69 %" and no next step;
-F + A produced "7 pp sampler, ~8 pp residual, on this band, at this bar". $0 of that came from the
+F + A produced "7 pp sampler, ~8 pp residual, on this band, at this bar". None of that came from the
 high-risk options: D, E and G would each have cost days and none of them would have touched the
 gap, because all three change what is being measured rather than where the difference comes from.
 

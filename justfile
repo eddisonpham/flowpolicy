@@ -195,6 +195,27 @@ processor-equiv checkpoint="checkpoints/diffusion_pusht_migrated":
 leftover-probe:
     uv run python scripts/smolvla_leftover_probe.py
 
+# Does robosuite still break LIBERO's env layer the way docs/11 4.5 recorded? Re-checks the five
+# walls and the walk's stopping point (KeyError: 'MountedMountedPanda') in the isolated probe env.
+# Seconds, CPU only, no network; exits 1 only if the wall list has drifted, because that is the case
+# that silently costs days. `.venv-libero` is gitignored, so `not run` is a normal outcome.
+port-walk:
+    @set -e; py=.venv-libero/bin/python; [ -x "$$py" ] || py=.venv-libero/Scripts/python.exe; "$$py" scripts/libero_port_walk.py
+
+# docs/11 5.2: one LIBERO-Spatial episode (28 chunks) that replaces 5.1's per-chunk band with a
+# measurement, so the GPU-hours column stops being three rows of band arithmetic. Needs ONE
+# interpreter with lerobot, transformers and robosuite 1.4.0 together -- the Linux path of 5.1;
+# on this Windows host it prints `[NOT RUN]` and exits 2, which is the correct outcome (4.4).
+# Rows are tagged `kind: pilot` in results/smolvla_pilot.jsonl. Pass py=<interpreter> to run it
+# somewhere the pin exists.
+smolvla-pilot py="uv run python":
+    {{py}} scripts/smolvla_pilot.py
+
+# The same script's three preconditions only: env constructs, checkpoint loads, and the
+# postprocessor reproduces the checkpoint's declared statistics at 1e-5. Minutes, no episode.
+smolvla-pilot-check py="uv run python":
+    {{py}} scripts/smolvla_pilot.py --check-only
+
 # Option H's episode arm (docs/10 section 5.1): the library's normalization in the measured path.
 # 600 is the pilot's cheapest branch -- a 4 pp effect costs 243 episodes at 5 % discordance and
 # 2,157 at 44 %, so the pilot's psi_hat decides the count and `eval-dp-buffers` runs the same one.

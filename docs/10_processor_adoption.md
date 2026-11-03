@@ -167,6 +167,19 @@ different operation order, not a different mapping. **Verdict: H is a null.** Th
 implementations are the same arithmetic, so the residual cannot be normalization; by the rule
 above, nothing is adopted and §5 never runs.
 
+**The probe's preflight had the pilot's blind spot (2026-11-02).** Neither JSON holds a number:
+`policy_preprocessor.json` names `normalizer_processor`'s statistics in
+`policy_preprocessor_step_3_normalizer_processor.safetensors` and the postprocessor names its own
+in `policy_postprocessor_step_0_unnormalizer_processor.safetensors`, so the step index in the
+filename is incidental and the name has to be read. `load_processor_norm` required the two JSONs
+and then handed them to lerobot, which is where a missing sidecar would have been noticed -- or not:
+both pipelines load with no statistics, which is the identity, and step 0 would have reported a
+disagreement that was really an absent file. The preflight now follows `named_sidecars()` and runs
+before the lerobot import, so the failure names the sidecar even on a host with no lerobot. Six
+CPU tests in `tests/unit/test_normalization_protocol.py` use this JSON layout, including a step
+whose `state_file` says `step_7` at index 0. The table above is unchanged: the sidecars were
+present when it ran.
+
 Shape of the work if it is taken: one script (`scripts/processor_equiv.py`, ~60 lines, run with
 `.venv-lerobot/Scripts/python.exe` because only that env has `lerobot`) plus one unit test on the
 part that can run without the library (the buffer path), and the numbers written into `docs/04`.
