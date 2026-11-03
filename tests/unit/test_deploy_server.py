@@ -8,6 +8,7 @@ what a client implementation will depend on.
 
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import urllib.error
@@ -18,7 +19,7 @@ import pytest
 import torch
 from torch import Tensor
 
-from policybench.deploy.server import PolicyServer
+from policybench.deploy.server import MAX_BODY_BYTES, PolicyServer
 
 pytestmark = pytest.mark.unit
 
@@ -105,6 +106,21 @@ def _post(url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read())
+
+
+def _raw_post(url: str, *, headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
+    """Send headers and no body, so the server's own length check is what is under test."""
+    host, port = url.removeprefix("http://").rsplit(":", 1)
+    connection = http.client.HTTPConnection(host, int(port), timeout=10)
+    try:
+        connection.putrequest("POST", "/chunk")
+        for name, value in headers.items():
+            connection.putheader(name, value)
+        connection.endheaders()
+        response = connection.getresponse()
+        return response.status, json.loads(response.read())
+    finally:
+        connection.close()
 
 
 def _payload(steps: int = 10) -> dict[str, Any]:
@@ -223,3 +239,19 @@ def test_a_payload_with_no_camera_is_a_400(served: Any) -> None:
     status, body = _post(f"{url}/chunk", payload)
     assert status == 400
     assert "no camera in the payload" in body["error"]
+
+
+def test_an_oversized_body_is_refused_from_its_length_header(served: Any) -> None:
+    # The header is not trusted into `rfile.read`: a declared length above the cap is answered
+    # before a byte of it is read, so a client cannot make the server allocate what it names.
+    url, _ = served
+    status, body = _raw_post(url, headers={"Content-Length": str(MAX_BODY_BYTES + 1)})
+    assert status == 413
+    assert str(MAX_BODY_BYTES) in body["error"]
+
+
+def test_a_non_integer_content_length_is_a_400(served: Any) -> None:
+    url, _ = served
+    status, body = _raw_post(url, headers={"Content-Length": "not-a-number"})
+    assert status == 400
+    assert "Content-Length" in body["error"]

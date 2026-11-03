@@ -26,7 +26,9 @@ Cameras are named, not positional (models/observation.py): a payload may carry o
 declaration. A client that sends one view to a policy expecting two gets HTTP 400, never the
 same frame twice.
 
-Errors are reported as HTTP 400 with `{"error": "<message>"}`. The server never rescales
+Errors are reported as HTTP 400 with `{"error": "<message>"}` (413 for a body above the size
+limit), and a request is only ever executed under the server's inference lock, so two clients
+queue on the policy instead of interleaving inside it. The server never rescales
 actions: the contract is raw pixels in, raw pixels out, the same units the environment
 takes, so a client cannot silently disagree with the harness about units.
 """
@@ -34,6 +36,7 @@ takes, so a client cannot silently disagree with the harness about units.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,7 +55,12 @@ from policybench.models.observation import (
 )
 from policybench.models.policies import PolicyLike
 
-__all__ = ["PolicyServer", "build_obs", "serve"]
+__all__ = ["MAX_BODY_BYTES", "PolicyServer", "build_obs", "serve"]
+
+# Two 256x256 RGB views over two observation steps are ~1.5 MB as JSON integers, so this is
+# headroom rather than a policy: it exists to stop an unbounded `Content-Length` from being
+# trusted into `rfile.read`.
+MAX_BODY_BYTES = 32 * 2**20
 
 
 def _frames(payload: Mapping[str, Any], spec: ObservationSpec) -> dict[str, np.ndarray]:
@@ -133,6 +141,12 @@ class PolicyServer(ThreadingHTTPServer):
         # What this policy needs from the observation path, read once at construction so
         # `/health` advertises it and every request is checked against it.
         self.spec = spec_for(policy)
+        # Serializes inference across handler threads. `ThreadingHTTPServer` is the right choice
+        # for a UI-style endpoint, but a single policy on one CUDA context cannot answer two
+        # requests at once: they interleave inside the model and the second request's queueing
+        # delay is reported as the policy's latency, which is the one number `/chunk` exists to
+        # report honestly.
+        self.inference_lock = threading.Lock()
         super().__init__(address, _Handler)
 
     @property
@@ -182,7 +196,17 @@ class _Handler(BaseHTTPRequestHandler):
         # posts to the wrong path used to see a connection reset instead of the 404 (which is
         # how `test_unknown_path_is_404` failed intermittently). Discarding it keeps the error
         # the contract promises.
-        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send(400, {"error": "Content-Length must be an integer"})
+            return
+        if length < 0 or length > MAX_BODY_BYTES:
+            # The body is unread, so keep-alive would parse it as the next request line; closing
+            # the connection is the only honest answer to a length we refuse to read.
+            self.close_connection = True
+            self._send(413, {"error": f"body is {length} bytes; the limit is {MAX_BODY_BYTES}"})
+            return
         raw = self.rfile.read(length) if length else b""
         if self.path.rstrip("/") != "/chunk":
             self._send(404, {"error": f"unknown path {self.path}"})
@@ -195,14 +219,15 @@ class _Handler(BaseHTTPRequestHandler):
             check_instruction(spec, instruction)
             obs = build_obs(payload, policy.obs_horizon, self.server.device, spec)
             steps = int(payload.get("steps", self.server.steps))
-            if self.server.device.startswith("cuda"):
-                torch.cuda.synchronize()
-            start = time.perf_counter()
-            chunk = policy.predict_chunk(obs, steps=steps, instruction=instruction)
-            if self.server.device.startswith("cuda"):
-                torch.cuda.synchronize()
-            latency_ms = (time.perf_counter() - start) * 1000.0
-            actions = chunk[0, : self.server.action_horizon].float().cpu().numpy()
+            with self.server.inference_lock:
+                if self.server.device.startswith("cuda"):
+                    torch.cuda.synchronize()
+                start = time.perf_counter()
+                chunk = policy.predict_chunk(obs, steps=steps, instruction=instruction)
+                if self.server.device.startswith("cuda"):
+                    torch.cuda.synchronize()
+                latency_ms = (time.perf_counter() - start) * 1000.0
+                actions = chunk[0, : self.server.action_horizon].float().cpu().numpy()
         except Exception as exc:
             self._send(400, {"error": f"{type(exc).__name__}: {exc}"})
             return

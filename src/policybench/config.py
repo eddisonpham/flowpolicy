@@ -75,6 +75,26 @@ class TrainConfig:
             raise ValueError("action_horizon must be <= pred_horizon (docs/03 section 6)")
         if d.obs_horizon < 1 or d.pred_horizon < 1:
             raise ValueError("horizons must be positive")
+        # Fields the loop divides by, indexes with, or uses as a modulus. A zero here is not a
+        # configuration the trainer can survive -- `step % log_every` is a ZeroDivisionError an
+        # hour into a run -- so they are rejected before the model is built.
+        if self.steps < 1:
+            raise ValueError("steps must be >= 1")
+        if self.batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        if self.log_every < 1:
+            raise ValueError("log_every must be >= 1 (the loop takes step % log_every)")
+        if self.val_every < 0 or self.ckpt_every < 0:
+            raise ValueError("val_every and ckpt_every must be >= 0 (0 disables them)")
+        if not 0.0 < self.ema_decay < 1.0:
+            raise ValueError("ema_decay must be in (0, 1)")
+        if self.warmup_steps < 0:
+            raise ValueError("warmup_steps must be >= 0")
+        if (
+            min(self.policy.flow_steps, self.policy.ddpm_sample_steps, self.policy.ddpm_train_steps)
+            < 1
+        ):
+            raise ValueError("sampler step counts must be >= 1")
         if self.policy.kind not in {"flow", "ddpm", "regression"}:
             raise ValueError(f"unknown policy kind {self.policy.kind!r}")
         if self.data.augment_crop < 0 or self.data.augment_crop > self.data.image_size:

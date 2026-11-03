@@ -58,6 +58,11 @@ def benchmark(
     obs = static_obs(policy, device)
     noise = static_noise(policy, device)
     cuda = device.startswith("cuda")
+    # Caught here rather than inside the capture block: `torch.cuda.Stream()` on a CPU host raises
+    # a CUDA-initialisation error, which reads as a broken driver rather than a mode that needs a
+    # device. `docs/05` section 1 measures this mode on the card only.
+    if mode == "cudagraph" and not cuda:
+        raise ValueError(f"mode='cudagraph' needs a CUDA device, got {device!r}")
     compile_s = 0.0
     first_call_ms = 0.0
 

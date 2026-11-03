@@ -33,6 +33,7 @@ so each step needs four scalars, all of which are known before the loop starts.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import torch
@@ -112,7 +113,7 @@ def ddim_coefficients(
 
 
 def ddim_sample(
-    predict_epsilon: object,
+    predict_epsilon: Callable[[Tensor, Tensor], Tensor],
     noise: Tensor,
     coeffs: DDIMCoefficients,
     *,
@@ -125,7 +126,6 @@ def ddim_sample(
     int64 tensor on the same device as `x_t`). Everything else here is elementwise
     arithmetic, so the whole loop is a single compilable/capturable graph.
     """
-    assert callable(predict_epsilon)
     sample = noise
     batch = sample.shape[0]
     for i in range(len(coeffs)):

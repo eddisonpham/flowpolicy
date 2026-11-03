@@ -444,12 +444,20 @@ def evaluate(
                 partial_fh.write(json.dumps(row) + "\n")
             partial_fh.flush()
     # Sorted before the append: chunks finish out of order now, and the block's row order should
-    # not depend on which worker got there first.
+    # not depend on which worker got there first. Filtered to this run's `config_id` and seeds:
+    # `completed_seeds` already refuses another run's rows when deciding what to *run*, and
+    # appending them here would splice a foreign block into this one -- a half-finished run from a
+    # different `config_id` is exactly what the `.partial` file is supposed to keep out.
+    requested = set(eval_seeds)
     rows: list[dict[str, Any]] = sorted(
         (
-            json.loads(line)
-            for line in partial.read_text(encoding="utf-8").splitlines()
-            if line.strip()
+            row
+            for row in (
+                json.loads(line)
+                for line in partial.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+            if row.get("config_id") == config_id and int(row["eval_seed"]) in requested
         ),
         key=lambda row: (int(row["eval_seed"]), int(row.get("noise_seed", 0))),
     )
