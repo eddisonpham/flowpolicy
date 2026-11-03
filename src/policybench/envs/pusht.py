@@ -21,7 +21,10 @@ MAX_STEPS = 300
 
 
 class PushTEnv:
-    """Minimal Gymnasium-style wrapper used by eval, gates and deployment."""
+    """Minimal Gymnasium-style wrapper used by eval, gates and deployment.
+
+    Satisfies `envs.base.EnvLike`; the conformance check is `tests/unit/test_env_protocol.py`.
+    """
 
     def __init__(self, seed: int | None = None) -> None:
         self._env = gym.make(
@@ -35,6 +38,16 @@ class PushTEnv:
     @property
     def fps(self) -> int:
         return int(self._env.metadata["render_fps"])
+
+    @property
+    def task_description(self) -> str:
+        """The string a language-conditioned policy would receive for this task.
+
+        Part of `EnvLike` (envs/base.py): a VLA needs a task string, and a client guessing one
+        is a different task. This is gym-pusht's own description of the task, not a prompt
+        tuned for any checkpoint -- no adapter here depends on its wording.
+        """
+        return "push the T block into the green target area"
 
     def reset(self, seed: int | None = None) -> dict[str, NDArray[np.generic]]:
         if seed is None:

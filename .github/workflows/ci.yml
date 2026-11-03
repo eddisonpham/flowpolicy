@@ -50,6 +50,25 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest -m "unit and not gpu"
 
+  # The adapter path is invisible to the jobs above: `lerobot` caps `torch<2.12` against this
+  # project's 2.14.1 pin, so it is not in the lockfile and every test that loads it skips there.
+  # This job installs it the way `just setup-pretrained` does -- `--no-deps`, on top of the pinned
+  # stack -- so those tests report `passed` instead of `skipped`. No weights: the checkpoint's
+  # contract tests read its config.json and processor JSONs, which are kilobytes.
+  # `transformers` is deliberately absent: one test asserts the config loads *without* it, and a
+  # VLA weight load needs a GPU this runner does not have (agents/05_ci_and_repro.md).
+  pretrained-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: bash scripts/setup_pretrained.sh
+      - run: uv run pytest -m "unit and not gpu" -q
+
   # docs/01 section 4 promises a tiny end-to-end training run, not just component tests:
   # 20 steps on synthetic data must lower the loss and survive a resume at rtol=1e-5.
   smoke:

@@ -11,6 +11,7 @@ import json
 import multiprocessing as mp
 import time
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ import torch
 
 from policybench.config import ModelConfig
 from policybench.data.normalizer import Stats
+from policybench.envs.base import EnvLike
 from policybench.envs.pusht import MAX_STEPS, PushTEnv
 from policybench.eval.metrics import assert_seed_disjoint
 from policybench.models.normalization import config_id_marks_path
@@ -31,6 +33,7 @@ from policybench.models.observation import (
 )
 from policybench.models.policies import PolicyLike, build_policy
 from policybench.models.pretrained import PretrainedDiffusionPolicy
+from policybench.provenance import provenance
 
 __all__ = ["assert_seed_disjoint", "evaluate", "load_policy", "rollout_episode"]
 
@@ -170,7 +173,11 @@ def rollout_episode(
     record_latency: bool = True,
     noise_seed_offset: int = 0,
     instruction: str = "",
+    env_factory: Callable[[], EnvLike] = PushTEnv,
 ) -> dict[str, float]:
+    """One episode. `env_factory` is the environment seam: default is the PushT wrapper, and a
+    caller that supplies its own (a test, or a second task) gets the same loop unchanged.
+    """
     # Seed the policy's stochastic sampler per episode. Without this the flow
     # sampler draws from whatever global RNG state the worker happens to hold,
     # so the same eval seed gave different rollouts on different runs and the
@@ -192,7 +199,7 @@ def rollout_episode(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(noise_seed)
     obs_horizon = policy.obs_horizon
-    env = PushTEnv()
+    env = env_factory()
     wall_start = time.perf_counter()
     try:
         obs = env.reset(seed=env_seed)
@@ -321,6 +328,9 @@ def _stamp(
     row["action_horizon"] = action_horizon
     row["weights"] = str(row.get("weights", "ema"))
     row["noise_seed_offset"] = int(noise_seed_offset)
+    # Nested, so no reader can mistake a hash for a measurement (agents/05). Old rows have no
+    # key at all, which reads as "unknown" -- the same convention `step` and `train_seed` use.
+    row["provenance"] = provenance()
     # Stamped only when an instruction was actually used. Every row written before this seam
     # existed has no instruction, and an empty string is that absence, not a measurement.
     if instruction:

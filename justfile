@@ -33,11 +33,15 @@ test: lint types
 
 # The same commands CI runs, plus the artifacts it diffs: one command that proves the tree is
 # self-consistent before a commit. `test` stays separate because it is what docs/01 promises.
+# `power_audit` is in the diff because it is the guard against this repo's own published mistake:
+# a null on an effect the block could not resolve. Regenerating it must be byte-identical, so an
+# uninformative null cannot appear, change or disappear without the diff saying so.
 verify: test
     uv run pytest -m "smoke" -q
     uv run python scripts/make_tables.py
     uv run python scripts/make_readme.py
-    git diff --exit-code -- results/tables README.md
+    uv run python scripts/power_audit.py
+    git diff --exit-code -- results/tables README.md results/power_audit.json
 
 # CI smoke job (docs/01 section 4): 20 steps of real training on CPU, plus resume
 # equivalence at rtol=1e-5. No GPU, no dataset, no network.

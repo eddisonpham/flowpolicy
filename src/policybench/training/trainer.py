@@ -8,12 +8,10 @@ resumes the same stream of windows and noise. Resume equivalence is tested at
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
 import signal
-import subprocess
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -27,23 +25,8 @@ from policybench.config import TrainConfig
 from policybench.data.normalizer import Stats
 from policybench.data.window import WindowDataset
 from policybench.models.policies import BasePolicy, build_policy
+from policybench.provenance import provenance
 from policybench.training.ema import ModelEMA
-
-
-def _git_hash() -> str:
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
-
-
-def _lock_hash(path: str | Path = "uv.lock") -> str:
-    try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    except OSError:
-        return "unknown"
 
 
 def cosine_with_warmup(step: int, warmup: int, total: int) -> float:
@@ -139,8 +122,9 @@ class Trainer:
             "rng": self._rng.get_state(),
             "torch_rng": torch.get_rng_state(),
             "cuda_rng": torch.cuda.get_rng_state_all() if self.device.type == "cuda" else None,
-            "git": _git_hash(),
-            "lock_sha256": _lock_hash(),
+            # Same stamps the eval rows carry (provenance.py), so a checkpoint and the block
+            # scored against it can be checked against each other.
+            **provenance(),
             "policy_kind": self.cfg.policy.kind,
             "final": final,
         }
