@@ -23,6 +23,10 @@ still get the non-negotiables.
 `GO <step-id>` gate below still applies, one step at a time. `C1` and `S1` landed 2026-11-02; what
 remains (`L1`, `A1`, `R1`) is gated on a Linux host with a CUDA card.
 
+`just pipeline` is the end-to-end check (probes -> eval blocks -> deploy rows -> generated
+artifacts, writing to `results/logs/pipeline_<stamp>/` rather than over `results/*.jsonl`), and
+`just logs` reads the newest run log, including any failure with its traceback.
+
 ## Workflow
 
 `/plan <step-id>` -> read the plan -> reply `GO <step-id>` and enable the green flag ->

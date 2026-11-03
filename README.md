@@ -138,6 +138,7 @@ just setup-pretrained       # optional backend for the borrowed policy (lerobot 
 just test                   # ruff, mypy strict, CPU unit tests (what CI runs)
 just eval-e0                # the acceptance gate: does the harness reproduce the model card?
 just tables && just figures && just readme
+just pipeline               # or: the whole stack end to end, into results/logs/pipeline_<stamp>/
 ```
 
 `just eval-e0` is the one to run first. It puts the pretrained checkpoint through our
@@ -148,6 +149,13 @@ measuring our plumbing rather than the policy.
 
 Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/), [just](https://github.com/casey/just).
 `just doctor` checks the environment before you spend GPU time.
+
+`just pipeline` is the end-to-end version: probes, then the eval blocks, the latency ladder, the
+deploy rows and the generated artifacts, each as a stage with its own log. It writes **new** rows
+into a scratch run directory rather than on top of `results/`, and ends by pairing them with the
+committed rows by seed -- so a re-run that disagrees is a reproducibility finding, not a quiet
+replacement of the evidence. `just logs` prints the newest run log, including any failure with
+its traceback.
 
 ## Results
 
@@ -490,6 +498,8 @@ Euler loop (it loses to `torch.compile`, 0.76-0.83x, and is reported as such):
 | `just bench-serve` | load-test the HTTP boundary (client vs server latency) | ~2 min |
 | `just bench-paced 4` | wall-clock paced loop at one step count (12 episodes) | ~7 min |
 | `just demo` | render one episode to an annotated GIF (`results/figures/demo_rollout.gif`) | ~1 min |
+| `just pipeline` | the measurement stack end to end, into `results/logs/pipeline_<stamp>/`, with a fresh-vs-committed comparison | ~55 min |
+| `just logs` | one screen of the newest run log: events, episodes, success rate, failures | seconds |
 | `just report` | one-screen summary of everything measured so far | seconds |
 | `just serve` | serve the policy over local HTTP (`docs/05` section 4) | seconds to start |
 | `just tables` / `just figures` / `just readme` | regenerate outputs from `results/*.jsonl` | seconds |

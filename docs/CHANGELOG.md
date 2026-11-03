@@ -2,6 +2,45 @@
 
 Paths in entries below refer to where files lived on the date of the entry. The 2026-10-27 entry lists every move (from-scratch measurements now under `results/ablation/`). Exception: the 2026-10-28 rename entry below rewrote `flowpolicy` to `policybench` in the older entries, so their paths still resolve; the events they describe happened under the earlier name, and the uploaded brief is still `flowpolicy_complete/`.
 
+## 2026-11-03: A block is observable, an end-to-end run exists, and the first one found a real bug
+
+`scripts/pipeline.py` (`just pipeline`) runs the measurement stack end to end -- probes, eval
+blocks, latency ladder, deploy rows, generated artifacts -- into a scratch run directory, and ends
+by pairing the fresh rows with the committed ones by seed. Two things came out of building it
+that no CPU test had caught.
+
+- **The pretrained adapter could not run on a GPU at all.** `BuffersNorm` was constructed from
+  `self.image_mean` *before* `self.to(device)`, and `Module.to` **rebinds** buffers rather than
+  moving them in place, so the norm object kept the CPU copies and every chunk raised
+  `RuntimeError: Expected all tensors to be on the same device, but found at least two devices,
+  cuda:0 and cpu`. Introduced with the option-H normalization change and invisible to the 229 CPU
+  tests, because a CPU-only move rebinds nothing. The move now happens first, and
+  `tests/unit/test_pretrained_normalization.py::test_the_normalization_tracks_the_device` pins it
+  with a `gpu`-marked test (device identity by `data_ptr`, plus one real chunk).
+- **A 200-episode block was unattended in the literal sense.** Nothing printed until the last
+  episode, and a worker crash surfaced as `BrokenProcessPool` from `future.result()` -- no seed, no
+  config, and under `spawn` not even the worker's traceback. Now:
+  - `src/policybench/logging.py` writes one JSON event per line to a gitignored
+    `results/logs/<run_id>_<stamp>.jsonl`: `run_start` with checkpoint, workers, device and git;
+    one `episode_done` per episode **from the worker that ran it**; `chunk_done` with rate and ETA;
+    `error` with the seed and the full traceback; `run_end` with the summary. `Progress` returns
+    the ETA as `None` before the first unit instead of a fabricated zero.
+  - **Workers write their own rows.** A chunk that raised on its 12th of 25 episodes used to lose
+    all 25; it now loses at most the episode that failed, and `RolloutError` names it.
+  - **`evaluate` no longer dies under `spawn` when called without a script.** From a REPL,
+    notebook or `python -c`, the main module's file is `<stdin>`/`<string>`, which `spawn` cannot
+    re-import. It asks `spawn.get_preparation_data` what it would do and falls back to one
+    in-process worker, logging `spawn_unavailable` so the slower shape is never assumed away.
+  - `scripts/logs.py` (`just logs`) renders a log: event counts, episodes, success rate, failures
+    with their tracebacks. `scripts/pipeline.py` writes `summary.json` after every stage, so a
+    killed run still says what it got through.
+- **Tests: 229 CPU unit (from 202), plus one `gpu` test.** `test_run_log.py` (schema, multi-handle
+  append, traceback capture, torn-line recovery, the ETA arithmetic), `test_rollout_worker_io.py`
+  (rows written per episode, prior rows kept on failure, the seed in the error, both branches of
+  the spawn guard) and `test_pipeline.py` (quick ⊂ full, every stage's script exists, no stage
+  writes to the committed evidence except `tables`, and the pairing rules: shared seeds only,
+  step counts never paired across, an absent block is "not compared" rather than zero).
+
 ## 2026-11-02: Rows name their commit, the seeding has a test, and the server stops trusting `steps`
 
 `agents/05_ci_and_repro.md` (`C1`) and `agents/04_serving_hardening.md` (`S1`) as one batch: four

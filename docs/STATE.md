@@ -2,12 +2,43 @@
 
 | Field | Value |
 |---|---|
-| Current milestone | Post-M9 scaffolding: the `agents/` plan set, 2026-11-02 |
-| Current step id | `C1` and `S1` done; `L1`, `A1` and `R1` blocked on a Linux host with a CUDA card (`agents/README.md`) |
+| Current milestone | Post-M9 scaffolding: observability and an end-to-end pipeline, 2026-11-03 |
+| Current step id | `C1`, `S1` and the E2E run done; `L1`, `A1` and `R1` blocked on a Linux host with a CUDA card (`agents/README.md`) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
-| Last completed step | `C1` (CI contracts, determinism, provenance, resolution guard) + `S1` (serving edges), 2026-11-02 |
-| Evidence | `just verify` green (2026-11-02: ruff, ruff format, mypy strict on 34 files, 202 CPU unit tests, 1 smoke test, tables/README/`results/power_audit.json` byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/`; the leftover gate in `results/smolvla_leftover_probe.json` |
+| Last completed step | observability layer (`logging.py`, `scripts/pipeline.py`, `scripts/logs.py`) + the GPU normalization fix, 2026-11-03 |
+| Evidence | `just verify` green (2026-11-03: ruff, ruff format, mypy strict on 35 files, 229 CPU unit tests + 1 `gpu`-marked device test, 1 smoke test, tables/README/`results/power_audit.json` byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/`; run logs (gitignored) in `results/logs/`; the leftover gate in `results/smolvla_leftover_probe.json` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
+
+## What changed on 2026-11-03 (a block is observable; the first end-to-end run found a GPU-only bug)
+
+`src/policybench/logging.py`, `scripts/pipeline.py` (`just pipeline`) and `scripts/logs.py`
+(`just logs`). The new end-to-end runner found a regression no CPU test could see, which is the
+argument for having one.
+
+- **Long blocks are observable now.** `RunLog` appends one JSON event per line to
+  `results/logs/<run_id>_<stamp>.jsonl`: `run_start` (checkpoint, workers, device, git), one
+  `episode_done` per episode from the worker that ran it, `chunk_done` with rate and ETA, `error`
+  with the seed and full traceback, `run_end` with the summary. `just logs` renders it.
+- **Workers write their own rows.** A chunk that raised on its 12th of 25 episodes used to lose
+  all 25; it now loses the episode that failed, and `RolloutError` names its seed. A crash is
+  reported as that error instead of `BrokenProcessPool`.
+- **`evaluate` works without a script.** From a REPL, notebook or `python -c` it now asks
+  `spawn.get_preparation_data` whether the main module can be re-imported, and falls back to one
+  in-process worker (logging `spawn_unavailable`) instead of dying on the first submit.
+- **The bug: the pretrained adapter could not run on a GPU at all.** `BuffersNorm` was built from
+  `self.image_mean` *before* `self.to(device)`, and `Module.to` rebinds buffers, so the norm kept
+  the CPU copies and every chunk raised a two-device error. It arrived with the option-H
+  normalization change and was invisible to 229 CPU tests, because a CPU-only move rebinds
+  nothing. The move now runs first; `test_the_normalization_tracks_the_device` (`gpu`-marked)
+  checks `data_ptr` identity and one real chunk.
+- **`just pipeline` runs the stack end to end** -- probes, E0, E0-published, E3, latency, E10
+  deploy, E15, then tables/README/power-audit with a diff gate -- into
+  `results/logs/pipeline_<stamp>/`, never over `results/*.jsonl`, and finishes by pairing the fresh
+  rows with the committed ones by seed (`--compare`). `--profile quick` smokes the whole path in
+  minutes; `summary.json` is rewritten after every stage so a killed run still reports.
+- **Evidence for this entry.** `just verify` green (35 files, 229 CPU unit tests, 1 smoke test,
+  artifacts byte-identical) and a real 2-worker block through `scripts/evaluate.py` (4 episodes,
+  seeds 5000-5003) producing per-chunk ETA events and a complete run log.
 
 ## What changed on 2026-11-02 (C1 and S1 landed: guards around numbers already measured)
 

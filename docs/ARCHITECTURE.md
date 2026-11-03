@@ -79,6 +79,14 @@ lateness. Three chunk strategies share one path (naive, temporal ensemble, cross
 `server.py` is a stdlib `ThreadingHTTPServer` around any `PolicyLike` with a documented JSON
 contract (`GET /health`, `POST /chunk`), raw pixels in and out.
 
+**Observability (`logging.py`, `scripts/pipeline.py`).** `RunLog` appends one JSON event per line
+to a gitignored `results/logs/`, opened by the parent *and* by each worker, so every episode's line
+names the process that ran it; `Progress` turns completed/total into a rate and an ETA. Workers
+write their own rows and log the failing seed with a traceback (`RolloutError`), which replaced a
+`BrokenProcessPool` that named nothing. `scripts/pipeline.py` runs the measurement stack as stages
+into a scratch run directory -- never on top of `results/` -- and pairs the fresh rows with the
+committed ones by seed, so a re-run can disagree with the evidence without overwriting it.
+
 **Evidence → publication.** `eval/report.py` holds the result-file registry and the computed
 headline answers (a verdict is computed from the strongest comparison available -- the same-episode
 block when it exists -- never from the unpaired one), `eval/stats.py` holds the exact tests, `scripts/make_tables.py` renders tables, `make_figures.py` plots,
@@ -101,6 +109,9 @@ current depends on it.
   measured", never as zero.
 - CPU-only CI covers the contracts, including a real-socket server test; GPU and simulator
   tests carry separate markers.
+- A long block is observable: every episode leaves a log line, and a failure names its seed.
+- A run never writes to `results/*.jsonl`; the pipeline writes to its own run directory and
+  compares itself against the committed rows.
 
 ## Deliberately absent
 
