@@ -34,7 +34,7 @@ that no CPU test had caught.
   - `scripts/logs.py` (`just logs`) renders a log: event counts, episodes, success rate, failures
     with their tracebacks. `scripts/pipeline.py` writes `summary.json` after every stage, so a
     killed run still says what it got through.
-- **Tests: 229 CPU unit (from 202), plus one `gpu` test.** `test_run_log.py` (schema, multi-handle
+- **Tests: 245 CPU unit (from 202), plus one `gpu` test.** `test_run_log.py` (schema, multi-handle
   append, traceback capture, torn-line recovery, the ETA arithmetic), `test_rollout_worker_io.py`
   (rows written per episode, prior rows kept on failure, the seed in the error, both branches of
   the spawn guard) and `test_pipeline.py` (quick ⊂ full, every stage's script exists, no stage
