@@ -12,6 +12,7 @@ from typing import Any
 
 from policybench.eval.metrics import bootstrap_ci, group_rows
 from policybench.eval.report import headline_table
+from policybench.eval.sampler_ablation import table_from_paths as sampler_ablation_table
 from policybench.eval.stats import fisher_exact, mcnemar_exact, p_text, resolvable_effect
 
 # Older names, kept because the tests pin the statistics through this module and because the
@@ -162,7 +163,61 @@ def deploy_table(rows: list[dict[str, Any]]) -> str:
         misses = sum(float(r["deadline_misses"]) for r in group) / len(group)
         ci = fmt_ci(point, lo, hi)
         lines.append(f"| {latency:g} | {strategy} | {ci} | {coverage:.3f} | {misses:.2f} |")
+    resolution = deploy_resolution_line(rows)
+    if resolution:
+        lines += ["", resolution]
     return "\n".join(lines) + "\n"
+
+
+def deploy_resolution_line(rows: list[dict[str, Any]]) -> str:
+    """State what the E10 cells can resolve, because one cell's rate is not a comparison.
+
+    Two strategies inside one latency share seeds *and* episodes, so the block can be read as
+    paired even though the table prints one rate per cell. The line quotes the largest such 2x2 the
+    block actually contains -- and its discordance, which is what sets the bar -- rather than a
+    generic power claim, so a same-seed difference is never read against a smaller effect than the
+    data supports. This is the table-level counterpart of the resolution column in
+    `results/power_audit.json`: a null quoted from this table has to carry the number above it.
+    """
+    cells: dict[tuple[float, str], dict[tuple[int, int], bool]] = {}
+    for row in rows:
+        if row.get("eval_seed") is None or row.get("success") is None:
+            continue
+        cell = (float(row["latency_ms"]), str(row.get("strategy")))
+        key = (int(row["eval_seed"]), int(row.get("episode") or 0))
+        cells.setdefault(cell, {})[key] = bool(row["success"])
+
+    best: tuple[int, float, str, str, int, int] | None = None
+    names = sorted(cells)
+    for index, first in enumerate(names):
+        for second in names[index + 1 :]:
+            if first[0] != second[0]:
+                continue
+            shared = set(cells[first]) & set(cells[second])
+            if len(shared) < 2:
+                continue
+            first_only = sum(1 for k in shared if cells[first][k] and not cells[second][k])
+            second_only = sum(1 for k in shared if cells[second][k] and not cells[first][k])
+            if best is None or len(shared) > best[0]:
+                best = (len(shared), first[0], first[1], second[1], first_only, second_only)
+    if best is None:
+        return ""
+    n, latency, first_name, second_name, first_only, second_only = best
+    psi = (first_only + second_only) / n
+    if psi == 0:
+        return (
+            f"Resolution: the largest same-seed pair here (`{first_name}` vs `{second_name}` at "
+            f"{latency:g} ms, {n} episodes) agrees on every episode, so this block states "
+            f"agreement rather than a minimum detectable difference."
+        )
+    mde = resolvable_effect(n, psi)
+    return (
+        f"Resolution: `{first_name}` and `{second_name}` share {n} episodes at {latency:g} ms and "
+        f"disagree on {first_only + second_only} of them (psi = {psi:.2f}), so a same-seed "
+        f"difference in this block is resolvable from {mde * 100:.1f} pp at 80 % power; a smaller "
+        f"one is a null this table cannot read. Each cell is measured at its own n, so its "
+        f"interval is wider than that bar."
+    )
 
 
 def kernel_table(rows: list[dict[str, Any]]) -> str:
@@ -669,6 +724,29 @@ def main() -> None:
             e3_replication_table(primary, replication), newline="\n"
         )
         print(f"wrote {OUT / 'e3_replication.md'} ({len(replication)} rows)")
+
+    # The sampler sensitivity block: two deploy blocks that differ only in which DDIM loop ran
+    # them. Rendered here rather than written by the script, so `just verify` diffs it like every
+    # other table and a hand-edited number cannot survive a regeneration.
+    fast_blocks = [
+        ROOT / "deploy_fast_sampler_45.jsonl",
+        ROOT / "deploy_fast_sampler_ext.jsonl",
+    ]
+    present = [path for path in fast_blocks if path.exists()]
+    # Both arms take every block they have: the committed deploy rows plus the extension run on
+    # seeds 10003-10006. Pairing is on the episode, so the table is over the union of what each
+    # arm covered and a block that does not overlap simply contributes nothing.
+    stock_blocks = [
+        path for path in (ROOT / "deploy.jsonl", ROOT / "deploy_stock_ext.jsonl") if path.exists()
+    ]
+    if present and stock_blocks:
+        (OUT / "sampler_sensitivity.md").write_text(
+            sampler_ablation_table(present, stock_blocks), newline="\n"
+        )
+        print(
+            f"wrote {OUT / 'sampler_sensitivity.md'} "
+            f"({len(present)} fast blocks, {len(stock_blocks)} stock blocks)"
+        )
 
     kernel_rows = read(ABLATION / "kernel.jsonl")
     if kernel_rows:

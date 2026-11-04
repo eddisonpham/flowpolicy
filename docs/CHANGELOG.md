@@ -81,6 +81,37 @@ that no CPU test had caught.
 - **`p_text` printed `p = 0.00` for p = 0.0026.** Two decimals is coarser than the band between
   1e-3 and 1e-2, which is where a paired 45-episode result lands. It now keeps three decimals
   there (`p = 0.003`) and two above it, so a decisive result cannot read as a rounding bug.
+- **The sampler gap is sized, and the first size was wrong in a way worth keeping.**
+  `scripts/sampler_sensitivity.py` -- rendered into `results/tables/sampler_sensitivity.md` by
+  `make_tables`, so it is regenerated and diffed like every other table -- pairs two deploy blocks
+  that differ only in which DDIM loop produced them. On the 45 episodes the committed block shares
+  with the fast one, 23 change hands and the rate gap reads +33.3 pp (exact McNemar p = 0.003) on a
+  block that resolves 29.1 pp. Extending the same two commands to seeds 10003-10006, i.e. **105
+  paired episodes**, moves it to 40 changing hands and **+7.6 pp, 95 % CI [-3.8, +19.0], exact
+  McNemar p = 0.27, psi = 0.38**, on a block that resolves 16.7 pp. So the loop choice changes
+  *which* episodes succeed at a rate no RNG could explain, and the rate difference is **not
+  established**: the 105-episode block's bar is larger than the gap it found. The 45-episode
+  +33.3 pp was a pilot whose interval was [+17.8, +48.9] and it is not quoted as the finding --
+  which is the whole argument for the extension, and for the resolution column that would have
+  flagged it.
+- **A block that cannot be paired is not paired.** The script's first version matched on eval seed,
+  episode and latency but not on `strategy`, so a fast `naive` episode was paired with a committed
+  `blend-r2` one and reported a 42 % stock rate where the like-for-like number is 69 %. `strategy`
+  is in the key now, and the unit tests pin that a block with a different strategy contributes
+  nothing rather than something plausible.
+- **`_paragraph` had to learn both verdicts.** The first version of the sentence assumed the gap
+  would exceed the block's resolution (true of the 45-episode pilot, false of the 105-episode
+  extension), so it would have printed "read as a difference" about a 7.6 pp gap against a 16.7 pp
+  bar. It now branches, and the unit tests pin both sides.
+- **Every reproducibility row carries its resolution.** A green row is a null, and a null without
+  its minimum detectable difference is the mistake `results/power_audit.json` exists to catch, so
+  `summary.json`'s rows now state `discordance`, `delta_pp` and `resolves_pp`. The E10 table gets
+  the same treatment from its own largest same-seed 2x2 (`deploy_resolution_line`), because a
+  table of per-cell rates otherwise reads as if any difference between two cells were meaningful.
+- **`agents/06_next_stage_plan.md`** orders the next stage: recipe stamping and a block manifest,
+  then the serving leftovers, then the generic adapter, with the hardware-gated pilot and RTC
+  after them -- and records the orders it rejected, so the next pass argues with it rather than
+  re-deriving it.
 - **Tests.** `test_pipeline.py` gains the non-episode block, unknown-vs-zero step count, the latency
   condition, the no-double-pairing rule and `--compare-only`; `test_run_log.py` gains the
   run-directory screen (stage table, a failed stage's log tail, a missing summary).

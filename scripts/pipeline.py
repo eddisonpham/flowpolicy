@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from policybench.eval.report import read_rows
-from policybench.eval.stats import mcnemar_exact, p_text
+from policybench.eval.stats import mcnemar_exact, p_text, resolvable_effect
 from policybench.logging import RunLog, default_log_path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -517,6 +517,11 @@ def compare_stage(fresh: Path, committed: Path) -> dict[str, Any]:
     only_new = sum(1 for a, b in shared if a["success"] and not b["success"])
     only_old = sum(1 for a, b in shared if not a["success"] and b["success"])
     p = mcnemar_exact(only_new, only_old)
+    discordance = (only_new + only_old) / len(shared)
+    # A reproducibility row is a null whenever the run agrees with the evidence, and a null is only
+    # worth the paper it is on if it says what it could have seen. The resolution is per block (n
+    # and the discordance actually observed), not a global "45 episodes is fine".
+    resolves = resolvable_effect(len(shared), discordance) if discordance > 0 else None
     return {
         "stage": fresh.stem,
         "n": len(shared),
@@ -525,6 +530,9 @@ def compare_stage(fresh: Path, committed: Path) -> dict[str, Any]:
         "agree": len(shared) - only_new - only_old,
         "fresh_only": only_new,
         "committed_only": only_old,
+        "discordance": round(discordance, 3),
+        "delta_pp": round(100 * (new_ok - old_ok) / len(shared), 1),
+        "resolves_pp": None if resolves is None else round(100 * resolves, 1),
         "p": round(p, 4),
         "summary": f"{only_new}/{only_old} discordant, exact McNemar {p_text(p)}",
     }
@@ -543,16 +551,20 @@ def render(comparisons: list[dict[str, Any]]) -> str:
     if not comparisons:
         return "no fresh rows to compare"
     lines = [
-        f"{'stage':<14}{'n':>5}{'fresh':>9}{'committed':>11}{'agree':>7}{'disc':>6}{'p':>9}",
+        f"{'stage':<14}{'n':>5}{'fresh':>9}{'committed':>11}{'agree':>7}{'disc':>6}"
+        f"{'delta':>8}{'resolves':>10}{'p':>9}",
     ]
     for c in comparisons:
         if not c.get("n"):
             lines.append(f"{c['stage']:<14}{'-':>5}  {c.get('status', '')}")
             continue
         disc = c["fresh_only"] + c["committed_only"]
+        resolves = c.get("resolves_pp")
         lines.append(
             f"{c['stage']:<14}{c['n']:>5}{c['fresh_success']:>9.1%}"
-            f"{c['committed_success']:>11.1%}{c['agree']:>7}{disc:>6}{c['p']:>9.3f}"
+            f"{c['committed_success']:>11.1%}{c['agree']:>7}{disc:>6}"
+            f"{c.get('delta_pp', 0.0):>+7.1f} "
+            f"{'-' if resolves is None else f'{resolves:.1f} pp':>9}{c['p']:>9.3f}"
         )
     return "\n".join(lines)
 

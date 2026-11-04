@@ -11,3 +11,5 @@
 | 200 | naive | 43.3% [26.7%, 60.0%] | 0.915 | 33.00 |
 | 200 | naive-r2 | 10.0% [0.0%, 23.3%] | 0.553 | 147.40 |
 | 200 | temporal-ensemble-r2 | 43.3% [26.7%, 60.0%] | 0.880 | 120.73 |
+
+Resolution: `blend-r2` and `naive` share 30 episodes at 100 ms and disagree on 17 of them (psi = 0.57), so a same-seed difference in this block is resolvable from 37.0 pp at 80 % power; a smaller one is a null this table cannot read. Each cell is measured at its own n, so its interval is wider than that bar.

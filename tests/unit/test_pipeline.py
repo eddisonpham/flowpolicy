@@ -129,6 +129,28 @@ def test_step_counts_are_not_paired_with_each_other(tmp_path: Path) -> None:
     assert result["status"] == "no shared seeds"
 
 
+def test_the_comparison_states_what_its_block_could_resolve(tmp_path: Path) -> None:
+    # Every green reproducibility row is a null, and a null has to carry the bar it was tested
+    # against: 45 agreeing episodes says "no difference above X pp", not "no difference".
+    fresh = _rows([1, 2, 3, 4], [1, 1, 0, 0])
+    old = _rows([1, 2, 3, 4], [0, 0, 0, 0])
+    result = compare_stage(
+        _write(tmp_path / "deploy.jsonl", fresh), _write(tmp_path / "old.jsonl", old)
+    )
+    assert result["discordance"] == 0.5
+    assert result["delta_pp"] == 50.0
+    assert result["resolves_pp"] is not None
+
+
+def test_agreement_carries_no_resolution_because_nothing_changed_hands(tmp_path: Path) -> None:
+    rows = _rows([1, 2, 3], [1, 0, 1])
+    result = compare_stage(
+        _write(tmp_path / "deploy.jsonl", rows), _write(tmp_path / "old.jsonl", rows)
+    )
+    assert result["discordance"] == 0.0
+    assert result["resolves_pp"] is None
+
+
 def test_a_recorded_sampler_mismatch_is_not_paired(tmp_path: Path) -> None:
     # The 2026-11-03 full run paired a fast-sampler deploy block against the committed stock one
     # and read a 13 pp *configuration* difference as a reproducibility failure. PushT is chaotic

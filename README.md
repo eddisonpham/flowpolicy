@@ -333,6 +333,8 @@ intervals at 40 paired episodes, which is a no-gross-regression check, not an eq
 | 200 | naive-r2 | 10.0% [0.0%, 23.3%] | 0.553 | 147.40 |
 | 200 | temporal-ensemble-r2 | 43.3% [26.7%, 60.0%] | 0.880 | 120.73 |
 
+Resolution: `blend-r2` and `naive` share 30 episodes at 100 ms and disagree on 17 of them (psi = 0.57), so a same-seed difference in this block is resolvable from 37.0 pp at 80 % power; a smaller one is a null this table cannot read. Each cell is measured at its own n, so its interval is wider than that bar.
+
 `naive` replans when the 8-step action queue empties; the `-r2` rows replan every 2 steps so
 four chunks overlap, which is the only regime where temporal ensembling differs from naive
 replacement. The loop runs in virtual time; chunk inference is timed for real, and every
