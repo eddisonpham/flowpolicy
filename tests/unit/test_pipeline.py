@@ -129,6 +129,32 @@ def test_step_counts_are_not_paired_with_each_other(tmp_path: Path) -> None:
     assert result["status"] == "no shared seeds"
 
 
+def test_a_recorded_sampler_mismatch_is_not_paired(tmp_path: Path) -> None:
+    # The 2026-11-03 full run paired a fast-sampler deploy block against the committed stock one
+    # and read a 13 pp *configuration* difference as a reproducibility failure. PushT is chaotic
+    # enough that a 1e-5 sampler difference flips episodes, so the two are not the same block.
+    fresh = [{"eval_seed": 1, "success": 1, "sampler": "fast", "dtype": "float32"}]
+    old = [{"eval_seed": 1, "success": 0, "sampler": "stock", "dtype": "float32"}]
+    result = compare_stage(
+        _write(tmp_path / "deploy.jsonl", fresh), _write(tmp_path / "old.jsonl", old)
+    )
+    assert result["n"] == 0
+    assert result["status"] == "no shared seeds"
+
+
+def test_an_unrecorded_sampler_stays_a_wildcard(tmp_path: Path) -> None:
+    # The committed deploy rows predate the `sampler`/`dtype` fields, and they are known to be
+    # stock (re-running seeds 10000+ with `--sampler stock` reproduces their step counts exactly).
+    # Refusing to pair them would throw away the one like-for-like comparison available.
+    fresh = [{"eval_seed": 1, "success": 1, "sampler": "stock", "dtype": "float32"}]
+    old = [{"eval_seed": 1, "success": 1}]
+    result = compare_stage(
+        _write(tmp_path / "deploy.jsonl", fresh), _write(tmp_path / "old.jsonl", old)
+    )
+    assert result["n"] == 1
+    assert result["agree"] == 1
+
+
 def test_an_absent_block_is_not_compared_rather_than_reported_as_zero(tmp_path: Path) -> None:
     result = compare_stage(tmp_path / "missing.jsonl", tmp_path / "also.jsonl")
     assert result["n"] == 0

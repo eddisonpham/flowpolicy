@@ -291,6 +291,15 @@ def build_stages(run: Path, profile: str) -> list[Stage]:
                         "10",
                         "--strategy",
                         "naive",
+                        # Stock, not the fast sampler: the committed deploy block (E10/E12) was
+                        # measured with `diffusers`' loop, and only its rows can be paired with
+                        # `results/deploy.jsonl`. The two loops agree to 1e-5 on the action, which
+                        # is enough for PushT's contact dynamics to flip episodes, so swapping it
+                        # here changes the block rather than reproducing it.
+                        "--sampler",
+                        "stock",
+                        "--dtype",
+                        "float32",
                         "--out",
                         str(rows / "deploy.jsonl"),
                     ),
@@ -392,6 +401,13 @@ def _opt_int(value: Any) -> int | None:
     return number if number > 0 else None
 
 
+def _opt_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _opt_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -402,7 +418,12 @@ def _opt_float(value: Any) -> float | None:
 
 
 #: Conditions a block varies *within* one file, so they have to agree to be the same episode.
-CONDITIONS = ("steps", "latency")
+#: `sampler` and `dtype` are here because they are *configurations*, not just labels: on
+#: 2026-11-03 the deploy stage ran the fast DDIM loop while the committed block was the stock one,
+#: and pairing them reported a 13 pp "reproducibility failure" that was two configurations. PushT
+#: is chaotic enough that a 1e-5 sampler difference flips episodes
+#: (`tests/gpu/test_pretrained_sampler_equivalence.py`), so a recorded mismatch must not pair.
+CONDITIONS = ("steps", "latency", "sampler", "dtype")
 
 
 def _key(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -430,6 +451,8 @@ def _key(row: dict[str, Any]) -> dict[str, Any] | None:
         "strategy": str(row.get("strategy") or ""),
         "steps": _opt_int(row.get("sampler_steps")),
         "latency": _opt_float(row.get("latency_ms")),
+        "sampler": _opt_text(row.get("sampler")),
+        "dtype": _opt_text(row.get("dtype")),
     }
 
 

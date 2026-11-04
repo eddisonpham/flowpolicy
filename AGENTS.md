@@ -26,6 +26,10 @@ remains (`L1`, `A1`, `R1`) is gated on a Linux host with a CUDA card.
 `just pipeline` is the end-to-end check (probes -> eval blocks -> deploy rows -> generated
 artifacts, writing to `results/logs/pipeline_<stamp>/` rather than over `results/*.jsonl`), and
 `just logs` reads the newest run log, including any failure with its traceback.
+`just pipeline-status <run-dir>` is the same screen for a whole run (stage table, the tail of each
+failed stage's log, and the fresh-vs-committed comparison); `just pipeline-compare <run-dir>`
+rebuilds only that comparison from the rows on disk, so a comparison that is wrong on its own does
+not cost a re-run of the episodes.
 
 ## Workflow
 

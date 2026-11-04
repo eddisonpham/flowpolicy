@@ -79,7 +79,7 @@ def test_a_torn_line_costs_its_seed_not_the_block(tmp_path: Path) -> None:
     # re-run; every other row in the block is still readable.
     partial = tmp_path / "out.jsonl.partial.0"
     partial.write_text(
-        json.dumps({"eval_seed": 1, "config_id": "mine"}) + "\n{\"eval_seed\": 2, \"conf\n",
+        json.dumps({"eval_seed": 1, "config_id": "mine"}) + '\n{"eval_seed": 2, "conf\n',
         encoding="utf-8",
     )
     assert completed_seeds(partial, "mine") == {1}

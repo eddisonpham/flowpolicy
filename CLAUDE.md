@@ -38,7 +38,9 @@ Spec lives in `docs/` (start at `docs/07_roadmap.md`). Current state lives in `d
 - CPU-only CI must stay green. GPU/sim/ROS tests are local and marked.
 - A long block is observable: workers write their own rows, events go to the gitignored
   `results/logs/`, and a failure names its seed. `just pipeline` is the end-to-end check; it writes
-  to a scratch run directory, never over `results/*.jsonl`.
+  to a scratch run directory, never over `results/*.jsonl`. Read a run with
+  `just pipeline-status <run-dir>` and rebuild only its comparison with
+  `just pipeline-compare <run-dir>` -- the stages are the expensive part, the comparison is not.
 - Never claim "bit-exact" unless the bitwise test passes.
 - Do not make commits, push, tag, or delete anything unless the step plan says so and has a GO.
 

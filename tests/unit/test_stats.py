@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from policybench.eval.stats import paired_delta_ci
+from policybench.eval.stats import p_text, paired_delta_ci
 
 pytestmark = pytest.mark.unit
 
@@ -54,6 +54,14 @@ def test_same_seed_reproduces_the_interval() -> None:
     assert paired_delta_ci(ours, [run_a, run_b], n_boot=300, seed=7) == paired_delta_ci(
         ours, [run_a, run_b], n_boot=300, seed=7
     )
+
+
+def test_a_p_value_near_a_percent_keeps_three_decimals() -> None:
+    # Two decimals rendered 0.0026 as "p = 0.00" on the 2026-11-03 pipeline run's deploy row,
+    # which reads as a rounding bug rather than as a decisive result.
+    assert p_text(0.0026) == "p = 0.003"
+    assert p_text(0.0004) == "p < 0.001"
+    assert p_text(0.46) == "p = 0.46"
 
 
 def test_no_runs_is_nan_not_a_number() -> None:

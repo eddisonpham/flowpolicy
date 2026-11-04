@@ -5,8 +5,8 @@
 | Current milestone | Post-M9 scaffolding: observability and an end-to-end pipeline, 2026-11-03 |
 | Current step id | `C1`, `S1` and the E2E run done; `L1`, `A1` and `R1` blocked on a Linux host with a CUDA card (`agents/README.md`) |
 | Green flag active | owner granted a standing green flag on 2026-10-19 ("finish the project end to end, MVP stage") |
-| Last completed step | observability layer (`logging.py`, `scripts/pipeline.py`, `scripts/logs.py`) + the GPU normalization fix, 2026-11-03 |
-| Evidence | `just verify` green (2026-11-03: ruff, ruff format, mypy strict on 35 files, 229 CPU unit tests + 1 `gpu`-marked device test, 1 smoke test, tables/README/`results/power_audit.json` byte-identical); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/`; run logs (gitignored) in `results/logs/`; the leftover gate in `results/smolvla_leftover_probe.json` |
+| Last completed step | observability layer (`logging.py`, `scripts/pipeline.py`, `scripts/logs.py`) + the GPU normalization fix + the first full 12-stage run, 2026-11-03 |
+| Evidence | `just verify` green (2026-11-03: ruff, ruff format, mypy strict on 35 files, 231 CPU unit tests + 1 `gpu`-marked device test, 1 smoke test, tables/README/`results/power_audit.json` byte-identical); a 12/12-stage `just pipeline --profile full` run in 73 min whose reproducibility block is `results/logs/pipeline_full_20261103T180142Z/summary.json` (e0 50/50, e0-published 200/200, e3 300/300, vqbet 200/200 agreeing, deploy 45/45 after the sampler fix); raw rows in `results/*.jsonl` (pretrained) and `results/ablation/*.jsonl` (from-scratch); tables in `results/tables/`; run logs (gitignored) in `results/logs/`; the leftover gate in `results/smolvla_leftover_probe.json` |
 | Spec installed | docs/00-07 + CHANGELOG.md; docs carry dated deviations where reality differs |
 
 ## What changed on 2026-11-03 (a block is observable; the first end-to-end run found a GPU-only bug)
@@ -39,6 +39,9 @@ argument for having one.
 - **Evidence for this entry.** `just verify` green (35 files, 229 CPU unit tests, 1 smoke test,
   artifacts byte-identical) and a real 2-worker block through `scripts/evaluate.py` (4 episodes,
   seeds 5000-5003) producing per-chunk ETA events and a complete run log.
+- **The first full run (12/12 stages, 73 min) found one thing and it was not in the code path it was aimed at.** The reproducibility block reproduces four of the five blocks exactly -- e0 50/50, e0-published 200/200, e3 300/300, vqbet 200/200, zero discordant episodes -- and disagreed on 23 of 45 deploy episodes. That was a *configuration* change: the deploy stage ran the default fast DDIM loop while every committed E10/E12 row predates `--sampler` and is stock. Re-running the same 45 keys with `--sampler stock --dtype float32` reproduces the committed rows exactly. The stage now pins both flags and `sampler`/`dtype` joined the pairing conditions, so two configurations cannot be read as one block.
+- `p_text` kept two decimals below 1e-2, so p = 0.0026 printed as "p = 0.00". Three decimals in that band now.
+- **Evidence for this entry.** The run itself, plus 231 CPU unit tests (the sampler condition, its wildcard counterpart and the p-value rendering are new) and `just verify` byte-identical.
 
 ## What changed on 2026-11-02 (C1 and S1 landed: guards around numbers already measured)
 

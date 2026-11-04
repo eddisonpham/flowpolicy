@@ -41,6 +41,50 @@ that no CPU test had caught.
   writes to the committed evidence except `tables`, and the pairing rules: shared seeds only,
   step counts never paired across, an absent block is "not compared" rather than zero).
 
+- **Four workers appending to one `.partial` file corrupted it.** The E3 stage died on a torn line
+  and reading the block back hit the same fragments: four writers on one file interleave mid-line.
+  Each worker now appends to its own shard (one writer per file) and every reader skips a line that
+  does not decode, so a torn line costs its own seed and nothing else (`test_eval_resume.py`).
+- **The comparison step then crashed after all twelve stages had gone green.** E9's latency rows are
+  benchmarks, not episodes -- no `eval_seed`, no `success` -- and `compare_stage` keyed on
+  `eval_seed`, so a 49-minute run ended in `KeyError: 'eval_seed'` with `summary.json` never getting
+  its reproducibility block. A row without those two fields is now "not an episode", and a block
+  with no episode rows reports `not an episode block` instead of a zero.
+- **...and once fixed it mis-paired E10, twice.** An absent `sampler_steps` -- the committed deploy
+  rows predate the field -- read as `0`, so the 45 fresh rows matched nothing and the run reported
+  "no shared seeds" over a real 45-episode overlap; and `latency_ms` was not in the key at all,
+  which would have paired a 0 ms episode with a 200 ms one. Pairing is now the episode (seed,
+  index, strategy) plus the conditions a block varies *within* one file (sampler steps, injected
+  latency), with an unrecorded field read as unknown rather than zero and a committed row never
+  paired twice. `just pipeline-compare <run-dir>` rebuilds that block from the rows on disk, which
+  is how the crashed comparison was repaired without re-running an episode.
+- **`just pipeline-status <run-dir>`.** The stage table from `summary.json` (status, wall-clock,
+  detail), the tail of each failed stage's own log, and the comparison: the screen for a run that
+  `just logs` is for one block, and safe to read while the run is going.
+- **E10's 23-episode disagreement was a configuration change, not HEAD drifting.** With the
+  pairing fixed, `deploy` paired 45/45 and disagreed on **23** (exact McNemar p = 0.003; fresh
+  35.6 % vs committed 68.9 %). It is not RNG -- the current code reproduces itself episode for
+  episode -- and it is not the environment: the paired episodes differ in *where they ended*
+  (300 vs 233 env steps) at near-equal final coverage (0.9489 vs 0.9536). The cause is the
+  sampler. The deploy stage never passed `--sampler`, so it ran the default fast DDIM loop, while
+  every committed E10/E12 row predates that flag and was measured with `diffusers`' stock loop.
+  The two loops agree to 1e-5 on the action (`tests/gpu/test_pretrained_sampler_equivalence.py`),
+  and PushT's contact dynamics turn that rounding into different episodes -- so the gap is a
+  property of the *sampler pair*, not of the repo failing to reproduce itself. Re-running the
+  same 45 keys with `--sampler stock --dtype float32` reproduces the committed rows exactly
+  (seed 10000 episode 0: 233 steps and the same outcome, row for row). The stage now pins those
+  two flags, and `sampler`/`dtype` joined the pairing conditions, so a recorded mismatch cannot be
+  paired as one block again; an unrecorded value stays a wildcard, which is what keeps the old
+  deploy rows comparable at all. The mis-configured block is kept as
+  `results/deploy_fast_sampler_45.jsonl` so the 23/45 disagreement can be recomputed instead of
+  taken on trust.
+- **`p_text` printed `p = 0.00` for p = 0.0026.** Two decimals is coarser than the band between
+  1e-3 and 1e-2, which is where a paired 45-episode result lands. It now keeps three decimals
+  there (`p = 0.003`) and two above it, so a decisive result cannot read as a rounding bug.
+- **Tests.** `test_pipeline.py` gains the non-episode block, unknown-vs-zero step count, the latency
+  condition, the no-double-pairing rule and `--compare-only`; `test_run_log.py` gains the
+  run-directory screen (stage table, a failed stage's log tail, a missing summary).
+
 ## 2026-11-02: Rows name their commit, the seeding has a test, and the server stops trusting `steps`
 
 `agents/05_ci_and_repro.md` (`C1`) and `agents/04_serving_hardening.md` (`S1`) as one batch: four

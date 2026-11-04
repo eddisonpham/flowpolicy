@@ -194,5 +194,12 @@ def resolvable_effect(
 
 
 def p_text(p: float) -> str:
-    """Render a p-value. Printing "p = 0.00" reads as a rounding bug; below 1e-3 say so."""
-    return "p < 0.001" if p < 0.001 else f"p = {p:.2f}"
+    """Render a p-value. Printing "p = 0.00" reads as a rounding bug; below 1e-3 say so.
+
+    Two decimals is too coarse between 1e-3 and 1e-2: 0.0026 used to render as "p = 0.00", which
+    is exactly the bug this docstring warns about, seen on the 2026-11-03 pipeline run's deploy
+    row. Keep three decimals in that band and two above it, where they are enough.
+    """
+    if p < 0.001:
+        return "p < 0.001"
+    return f"p = {p:.3f}" if p < 0.01 else f"p = {p:.2f}"
